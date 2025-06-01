@@ -1195,15 +1195,14 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
         if (!last_written_surface->copy_buffer)
             last_written_surface->copy_buffer = std::make_unique<vkutil::Buffer>();
 
-        vkutil::Buffer c_buffer = *last_written_surface->copy_buffer;
-
-        if (!copy_buffer.buffer) {
-            copy_buffer.size = last_written_surface->stride_bytes * last_written_surface->original_height;
-            copy_buffer.init_buffer(vk::BufferUsageFlagBits::eTransferDst, vkutil::vma_mapped_alloc);
+        if (!last_written_surface->copy_buffer->buffer) { // Correctly accesses the 'buffer' member of the vkutil::Buffer object
+            last_written_surface->copy_buffer->size = last_written_surface->stride_bytes * last_written_surface->original_height;
+            last_written_surface->copy_buffer->init_buffer(vk::BufferUsageFlagBits::eTransferDst, vkutil::vma_mapped_alloc);
         }
 
-        buffer = copy_buffer.buffer;
+        buffer = last_written_surface->copy_buffer->buffer; // Correctly accesses the 'buffer' member
         offset = 0;
+
     } else {
         std::tie(buffer, offset) = state.get_matching_mapping(last_written_surface->data);
     }
