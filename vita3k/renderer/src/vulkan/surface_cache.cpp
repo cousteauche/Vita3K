@@ -313,6 +313,9 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     const uint32_t width = static_cast<uint32_t>(original_width * state.res_multiplier);
     const uint32_t height = static_cast<uint32_t>(original_height * state.res_multiplier);
 
+    // FIX 1: Declare bytes_per_pixel_requested before its first use
+    uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
+
     bool overlap = true;
     // Of course, this works under the assumption that range must be unique :D
     auto ite = color_address_lookup.upper_bound(address);
@@ -347,35 +350,36 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
         tiling = SurfaceTiling::Linear;
     } else {
         uint32_t pixel_stride = original_width;
-switch (texture.texture_type()) {
-case SCE_GXM_TEXTURE_LINEAR:
-    // when the texture is linear, the stride should be aligned to 8 pixels
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = align(pixel_stride, 8);
-    break;
-case SCE_GXM_TEXTURE_TILED:
-    // tiles are 32x32
-    tiling = SurfaceTiling::Tiled;
-    pixel_stride = align(pixel_stride, 32);
-    break;
-case SCE_GXM_TEXTURE_LINEAR_STRIDED:
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel_requested;
-    break;
-case SCE_GXM_TEXTURE_SWIZZLED:
-case SCE_GXM_TEXTURE_CUBE:
-case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
-case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
-    LOG_WARN("Unsupported texture type {} for color surface, treating as linear", static_cast<int>(texture.texture_type()));
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = align(pixel_stride, 8);
-    break;
-default:
-    LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = align(pixel_stride, 8);
-    break;
-}
+        // FIX 2: Correctly enclose all cases within the switch statement's braces
+        switch (texture.texture_type()) {
+        case SCE_GXM_TEXTURE_LINEAR:
+            // when the texture is linear, the stride should be aligned to 8 pixels
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = align(pixel_stride, 8);
+            break;
+        case SCE_GXM_TEXTURE_TILED:
+            // tiles are 32x32
+            tiling = SurfaceTiling::Tiled;
+            pixel_stride = align(pixel_stride, 32);
+            break;
+        case SCE_GXM_TEXTURE_LINEAR_STRIDED:
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel_requested;
+            break;
+        case SCE_GXM_TEXTURE_SWIZZLED:
+        case SCE_GXM_TEXTURE_CUBE:
+        case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+        case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
+            LOG_WARN("Unsupported texture type {} for color surface, treating as linear", static_cast<int>(texture.texture_type()));
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = align(pixel_stride, 8);
+            break;
+        default:
+            LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = align(pixel_stride, 8);
+            break;
+        } // End of switch statement
         stride_bytes = pixel_stride * gxm::bits_per_pixel(base_format) / 8;
     }
     uint32_t total_surface_size = stride_bytes * original_height;
@@ -400,7 +404,8 @@ default:
         // the texture start at the same location should be enough
         return std::nullopt;
 
-    uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
+    // This line was previously here (line 350 in the original snippet)
+    // uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
     uint32_t bytes_per_pixel_in_store = gxm::bits_per_pixel(info.format) / 8;
 
     if (std::max(bytes_per_pixel_requested, bytes_per_pixel_in_store) % std::min(bytes_per_pixel_requested, bytes_per_pixel_in_store) != 0)
@@ -748,30 +753,30 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_depth_stencil_as_tex
     SurfaceTiling tiling;
     uint32_t stride_samples;
 
-switch (texture.texture_type()) {
-case SCE_GXM_TEXTURE_LINEAR:
-    tiling = SurfaceTiling::Linear;
-    stride_samples = align(memory_width, 8);
-    break;
-case SCE_GXM_TEXTURE_LINEAR_STRIDED:
-    tiling = SurfaceTiling::Linear;
-    stride_samples = (gxm::get_stride_in_bytes(texture) * 8) / gxm::bits_per_pixel(base_format);
-    break;
-case SCE_GXM_TEXTURE_TILED:
-    tiling = SurfaceTiling::Tiled;
-    stride_samples = align(memory_width, 32);
-    break;
-case SCE_GXM_TEXTURE_SWIZZLED:
-case SCE_GXM_TEXTURE_CUBE:
-case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
-case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
-    // Depth/stencil should never be swizzled, but handle it gracefully
-    LOG_WARN("Unexpected texture type {} for depth/stencil surface", static_cast<int>(texture.texture_type()));
-    return std::nullopt;
-default:
-    LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
-    return std::nullopt;
-}
+    switch (texture.texture_type()) {
+    case SCE_GXM_TEXTURE_LINEAR:
+        tiling = SurfaceTiling::Linear;
+        stride_samples = align(memory_width, 8);
+        break;
+    case SCE_GXM_TEXTURE_LINEAR_STRIDED:
+        tiling = SurfaceTiling::Linear;
+        stride_samples = (gxm::get_stride_in_bytes(texture) * 8) / gxm::bits_per_pixel(base_format);
+        break;
+    case SCE_GXM_TEXTURE_TILED:
+        tiling = SurfaceTiling::Tiled;
+        stride_samples = align(memory_width, 32);
+        break;
+    case SCE_GXM_TEXTURE_SWIZZLED:
+    case SCE_GXM_TEXTURE_CUBE:
+    case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+    case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
+        // Depth/stencil should never be swizzled, but handle it gracefully
+        LOG_WARN("Unexpected texture type {} for depth/stencil surface", static_cast<int>(texture.texture_type()));
+        return std::nullopt;
+    default:
+        LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
+        return std::nullopt;
+    }
 
     if (stride_samples % 32 != 0)
         // a depth/stencil always has a stride which is a multiple of the tile size
@@ -1190,7 +1195,7 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
         if (!last_written_surface->copy_buffer)
             last_written_surface->copy_buffer = std::make_unique<vkutil::Buffer>();
 
-        vkutil::Buffer &copy_buffer = *last_written_surface->copy_buffer;
+        vkutil::Buffer ©_buffer = *last_written_surface->copy_buffer;
 
         if (!copy_buffer.buffer) {
             copy_buffer.size = last_written_surface->stride_bytes * last_written_surface->original_height;
