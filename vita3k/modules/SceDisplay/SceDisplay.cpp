@@ -162,7 +162,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_setbuf_time).count();
             float fps = (30.0f * 1000.0f) / duration;
             
-            LOG_INFO("WipEout SetFrameBuf rate: {:.1f} fps, sync mode: {}", fps, sync);
+            LOG_INFO("WipEout SetFrameBuf rate: {:.1f} fps, sync mode: {}", fps, static_cast<int>(sync));
             last_setbuf_time = now;
         }
     }
