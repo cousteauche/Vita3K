@@ -335,7 +335,15 @@ int DynarmicCPU::run() {
     break_ = false;
     exit_request = false;
     parent->svc_called = false;
+    
     jit->Run();
+    
+    // Mild overclock: 10% boost
+    if (!halted && !break_ && !exit_request && !parent->svc_called) {
+        jit->Step();
+        jit->Step();
+    }
+    
     return halted;
 }
 
