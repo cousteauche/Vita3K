@@ -20,7 +20,6 @@
 #include <cstdint>
 #include <functional>
 
-typedef uint32_t Address;
 typedef std::function<bool(Address, bool)> ProtectCallback;
 
 // Powers of 10
