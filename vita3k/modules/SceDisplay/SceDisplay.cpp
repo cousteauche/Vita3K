@@ -32,47 +32,31 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-    // WipEout 2048 60FPS Enhancement
+    // WipEout 2048 Direct 60FPS Override
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         
-        // Track SetFrameBuf timing to detect 30fps mode
-        static auto last_setframe_time = std::chrono::high_resolution_clock::now();
-        static bool force_60fps = false;
-        static int skip_count = 0;
-        
+        // For WipEout, always use immediate return for SetFrameBuf waits
+        // This forces the game to run at max framerate
         if (is_since_setbuf) {
-            auto now = std::chrono::high_resolution_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_setframe_time).count();
+            static int skip_count = 0;
+            skip_count++;
             
-            // If last frame took ~33ms, we're in 30fps mode (gameplay)
-            // If it took ~16ms, we're in 60fps mode (menus)
-            bool was_30fps = force_60fps;
-            force_60fps = (elapsed > 25000 && elapsed < 40000);
-            
-            // Log mode changes
-            if (force_60fps != was_30fps) {
-                LOG_INFO("WipEout 60fps: Detected {} mode", 
-                         force_60fps ? "30fps gameplay (will force 60fps)" : "60fps menu (native)");
+            // Log every 60 skipped frames
+            if (skip_count % 60 == 0) {
+                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits", skip_count);
             }
             
-            last_setframe_time = now;
-            
-            // During 30fps mode, skip the wait entirely to achieve 60fps
-            if (force_60fps) {
-                skip_count++;
-                if (skip_count % 60 == 0) {
-                    LOG_INFO("WipEout 60fps: Forced {} frames to 60fps", skip_count);
-                }
-                return SCE_DISPLAY_ERROR_OK;
-            }
+            // Return immediately without waiting
+            return SCE_DISPLAY_ERROR_OK;
         }
+        
+        // For non-SetFrameBuf waits, reduce vcount to minimum
+        vcount = 0;
     }
 
     // Original fps_hack code (for other games)
-    if (emuenv.display.fps_hack)
-        // a game can use a vcount of 2 to render as 30fps
-        // thus doing this can allow some games to run at 60fps
+    if (emuenv.display.fps_hack && vcount > 1)
         vcount = 1;
 
     uint64_t target_vcount;
@@ -158,6 +142,24 @@ EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
 
 EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
+    
+    // WipEout 2048 FPS tracking
+    if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        static int frame_count = 0;
+        static auto last_time = std::chrono::high_resolution_clock::now();
+        
+        frame_count++;
+        
+        // Log FPS every 60 frames
+        if (frame_count % 60 == 0) {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
+            float fps = (60.0f * 1000.0f) / duration;
+            
+            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {})", fps, static_cast<int>(sync));
+            last_time = now;
+        }
+    }
     
     if (!pFrameBuf)
         return SCE_DISPLAY_ERROR_OK;
