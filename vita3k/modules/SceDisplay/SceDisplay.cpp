@@ -32,6 +32,25 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
+    // ADD THE WIPEOUT WATCHDOG HERE - BEFORE ANY OTHER LOGIC
+    // WipEout 2048 FPS Watchdog
+    if (emuenv.display.fps_hack && 
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        
+        static auto last_frame_time = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_frame_time).count();
+        
+        // If game is trying to wait longer than 16.67ms (60fps), override it
+        if (is_since_setbuf && elapsed < 16667) {
+            // Skip this wait to maintain 60fps
+            return SCE_DISPLAY_ERROR_OK;
+        }
+        last_frame_time = now;
+    }
+
+    // EXISTING LOGGING CODE (keep this for debugging)
+
     // WipEout 2048 specific logging
     if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
         static int call_count = 0;
