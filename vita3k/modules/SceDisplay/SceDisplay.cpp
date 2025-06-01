@@ -32,9 +32,31 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-    if (emuenv.display.fps_hack)
-        // a game can use a vcount of 2 to render as 30fps
-        // thus doing this can allow some games to run at 60fps
+    // WipEout 2048 Direct 60FPS Override
+    if (emuenv.display.fps_hack && 
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        
+        // For WipEout, always use immediate return for SetFrameBuf waits
+        // This forces the game to run at max framerate
+        if (is_since_setbuf) {
+            static int skip_count = 0;
+            skip_count++;
+            
+            // Log every 60 skipped frames
+            if (skip_count % 60 == 0) {
+                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits", skip_count);
+            }
+            
+            // Return immediately without waiting
+            return SCE_DISPLAY_ERROR_OK;
+        }
+        
+        // For non-SetFrameBuf waits, reduce vcount to minimum
+        vcount = 0;
+    }
+
+    // Original fps_hack code (for other games)
+    if (emuenv.display.fps_hack && vcount > 1)
         vcount = 1;
 
     uint64_t target_vcount;
@@ -120,6 +142,25 @@ EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
 
 EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
+    
+    // WipEout 2048 FPS tracking
+    if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        static int frame_count = 0;
+        static auto last_time = std::chrono::high_resolution_clock::now();
+        
+        frame_count++;
+        
+        // Log FPS every 60 frames
+        if (frame_count % 60 == 0) {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
+            float fps = (60.0f * 1000.0f) / duration;
+            
+            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {})", fps, static_cast<int>(sync));
+            last_time = now;
+        }
+    }
+    
     if (!pFrameBuf)
         return SCE_DISPLAY_ERROR_OK;
     if (pFrameBuf->size != sizeof(SceDisplayFrameBuf) && pFrameBuf->size != sizeof(SceDisplayFrameBuf2)) {
