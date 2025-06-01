@@ -360,7 +360,7 @@ case SCE_GXM_TEXTURE_TILED:
     break;
 case SCE_GXM_TEXTURE_LINEAR_STRIDED:
     tiling = SurfaceTiling::Linear;
-    pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel;
+    pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel_requested;
     break;
 case SCE_GXM_TEXTURE_SWIZZLED:
 case SCE_GXM_TEXTURE_CUBE:
