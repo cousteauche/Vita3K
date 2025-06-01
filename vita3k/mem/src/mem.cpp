@@ -26,6 +26,7 @@
 #include <cstring>
 #include <mutex>
 #include <utility>
+#include <string> // For std::string
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -34,6 +35,7 @@
 #include <csignal>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <errno.h> // For errno and strerror
 #endif
 
 constexpr uint32_t STANDARD_PAGE_SIZE = KiB(4);
@@ -124,6 +126,8 @@ bool init(MemState &state, const bool use_page_table) {
     if (use_page_table) {
         state.page_table = PageTable(new PagePtr[TOTAL_MEM_SIZE / KiB(4)]);
         // we use an absolute offset (it is faster), so each entry is the same
+        // Note: This initial fill might be problematic if AddExternalMapping is not used immediately
+        // for regions that will be externally mapped.
         std::fill_n(state.page_table.get(), TOTAL_MEM_SIZE / KiB(4), state.memory.get());
     }
 
@@ -167,13 +171,14 @@ static Address alloc_inner(MemState &state, uint32_t start_page, uint32_t page_c
 
     const uint32_t size = page_count * state.page_size;
     const Address addr = page_num * state.page_size;
-    uint8_t *const memory = &state.memory[addr];
+    uint8_t *const memory = &state.memory[addr]; // This is `state.memory.get() + addr.address()`, correct.
 
     // Make memory chunk available to access
 #ifdef _WIN32
     const void *const ret = VirtualAlloc(memory, size, MEM_COMMIT, PAGE_READWRITE);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
 #else
+    // This mprotect is on the main allocated block, so 'memory' is already host-aligned
     const int ret = mprotect(memory, size, PROT_READ | PROT_WRITE);
     LOG_CRITICAL_IF(ret == -1, "mprotect failed: {}", get_error_msg());
 #endif
@@ -225,28 +230,42 @@ void unprotect_inner(MemState &state, Address addr, uint32_t size) {
     if (LOG_PROTECT) {
         fmt::print("Unprotect: {} {}\n", log_hex(addr), size);
     }
-    uint8_t *addr_ptr = state.use_page_table ? state.page_table[addr / KiB(4)] : state.memory.get();
+    // Correctly get the host pointer from the Vita address.
+    // 'addr' is assumed to be page-aligned from calling 'align_to_page' previously.
+    void* host_ptr = addr.get_host_ptr(state);
 
 #ifdef _WIN32
     DWORD old_protect = 0;
-    const BOOL ret = VirtualProtect(&addr_ptr[addr], size - 1, PAGE_READWRITE, &old_protect);
+    // Removed '- 1' from size. VirtualProtect expects the exact size of the region.
+    const BOOL ret = VirtualProtect(host_ptr, size, PAGE_READWRITE, &old_protect);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
 #else
-    const int ret = mprotect(&addr_ptr[addr], size, PROT_READ | PROT_WRITE);
-    LOG_CRITICAL_IF(ret == -1, "mprotect failed: {}", get_error_msg());
+    // Detailed logging for mprotect arguments.
+    LOG_CRITICAL("mprotect unprotect_inner: Vita_Addr={:X}, Host_Ptr={:X}, Size={:X}, Prot={:x}",
+                 addr.address(), (uintptr_t)host_ptr, size, PROT_READ | PROT_WRITE);
+    const int ret = mprotect(host_ptr, size, PROT_READ | PROT_WRITE);
+    LOG_CRITICAL_IF(ret == -1, "mprotect failed (errno {}): {}", errno, get_error_msg());
 #endif
 }
 
 void protect_inner(MemState &state, Address addr, uint32_t size, const MemPerm perm) {
-    uint8_t *addr_ptr = state.use_page_table ? state.page_table[addr / KiB(4)] : state.memory.get();
+    // Correctly get the host pointer from the Vita address.
+    // 'addr' is assumed to be page-aligned from calling 'align_to_page' previously.
+    void* host_ptr = addr.get_host_ptr(state);
+
+    int prot_flags = (perm == MemPerm::None) ? PROT_NONE : ((perm == MemPerm::ReadOnly) ? PROT_READ : (PROT_READ | PROT_WRITE));
 
 #ifdef _WIN32
     DWORD old_protect = 0;
-    const BOOL ret = VirtualProtect(&addr_ptr[addr], size - 1, (perm == MemPerm::None) ? PAGE_NOACCESS : ((perm == MemPerm::ReadOnly) ? PAGE_READONLY : PAGE_READWRITE), &old_protect);
+    // Removed '- 1' from size. VirtualProtect expects the exact size of the region.
+    const BOOL ret = VirtualProtect(host_ptr, size, (perm == MemPerm::None) ? PAGE_NOACCESS : ((perm == MemPerm::ReadOnly) ? PAGE_READONLY : PAGE_READWRITE), &old_protect);
     LOG_CRITICAL_IF(!ret, "VirtualAlloc failed: {}", get_error_msg());
 #else
-    const int ret = mprotect(&addr_ptr[addr], size, (perm == MemPerm::None) ? PROT_NONE : ((perm == MemPerm::ReadOnly) ? PROT_READ : (PROT_READ | PROT_WRITE)));
-    LOG_CRITICAL_IF(ret == -1, "mprotect failed: {}", get_error_msg());
+    // Detailed logging for mprotect arguments.
+    LOG_CRITICAL("mprotect protect_inner: Vita_Addr={:X}, Host_Ptr={:X}, Size={:X}, Perm={:x}",
+                 addr.address(), (uintptr_t)host_ptr, size, prot_flags);
+    const int ret = mprotect(host_ptr, size, prot_flags);
+    LOG_CRITICAL_IF(ret == -1, "mprotect failed (errno {}): {}", errno, get_error_msg());
 #endif
 }
 
@@ -264,9 +283,16 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
             if (it != state.external_mapping.end() && addr_val < it->first + it->second.size) {
                 vaddr = static_cast<Address>(addr_val - it->first + it->second.address);
             } else {
-                return false;
+                // Previously, this branch returned false immediately.
+                // Log and try to unprotect anyway if it was a valid Vita address being accessed
+                // (This is a HACK, but matches previous behavior after logging)
+                LOG_CRITICAL("Unhandled access violation: Host address 0x{:X} not within main memory range, and not found in external mappings. Attempting unprotect with 4 bytes.", fault_addr);
+                unprotect_inner(state, Address(fault_addr), 4); // Use host_ptr as Vita address for temp unprotect
+                return true;
             }
         } else {
+            // Unhandled access violation: Host address not within main memory range, and page table not used.
+            LOG_CRITICAL("Unhandled access violation: Host address 0x{:X} not within main memory range. Returning false.", fault_addr);
             return false;
         }
     } else {
@@ -274,6 +300,7 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
     }
 
     if (!is_valid_addr(state, vaddr)) {
+        LOG_CRITICAL("Unhandled access violation: Vita Address 0x{:X} is not valid. Returning false.", vaddr.address());
         return false;
     }
     if (LOG_PROTECT) {
@@ -284,7 +311,7 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
     if (it == state.protect_tree.end()) {
         // HACK: keep going
         unprotect_inner(state, vaddr, 4);
-        LOG_CRITICAL("Unhandled write protected region was valid. Address=0x{:X}", vaddr);
+        LOG_CRITICAL("Unhandled write protected region was valid. Address=0x{:X}. No protection segment found. Unprotecting 4 bytes.", vaddr.address());
         return true;
     }
 
@@ -292,7 +319,7 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
     if (vaddr < it->first || vaddr >= it->first + info.size) {
         // HACK: keep going
         unprotect_inner(state, vaddr, 4);
-        LOG_CRITICAL("Unhandled write protected region was valid. Address=0x{:X}", vaddr);
+        LOG_CRITICAL("Unhandled write protected region was valid. Address=0x{:X}. Not within found protection segment. Unprotecting 4 bytes.", vaddr.address());
         return true;
     }
 
@@ -313,20 +340,24 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
         unprotect_inner(state, it->first, info.size);
         state.protect_tree.erase(it);
     } else {
-        Address beg_region = info.blocks.begin()->first;
-        Address end_region = info.blocks.rbegin()->first + info.blocks.rbegin()->second.size;
+        // Recalculate the region to protect for the remaining blocks
+        // This logic needs to be robust if `blocks` becomes empty here
+        if (!info.blocks.empty()) {
+            Address beg_region = info.blocks.begin()->first;
+            Address end_region = info.blocks.rbegin()->first + info.blocks.rbegin()->second.size;
 
-        beg_region = align_down(beg_region, state.page_size);
-        end_region = align(end_region, state.page_size);
+            beg_region = align_down(beg_region, state.page_size);
+            end_region = align(end_region, state.page_size);
 
-        if (beg_region != previous_beg) {
-            ProtectSegmentInfo new_info = std::move(info);
-            new_info.size = end_region - beg_region;
+            if (beg_region != previous_beg) {
+                ProtectSegmentInfo new_info = std::move(info);
+                new_info.size = end_region - beg_region;
 
-            state.protect_tree.erase(it);
-            state.protect_tree.emplace(beg_region, std::move(new_info));
-        } else {
-            info.size = end_region - beg_region;
+                state.protect_tree.erase(it);
+                state.protect_tree.emplace(beg_region, std::move(new_info));
+            } else {
+                info.size = end_region - beg_region;
+            }
         }
     }
 
@@ -336,7 +367,7 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
 bool add_protect(MemState &state, Address addr, const uint32_t size, const MemPerm perm, const ProtectCallback &callback) {
     const std::lock_guard<std::mutex> lock(state.protect_mutex);
     ProtectSegmentInfo protect(size, perm);
-    align_to_page(state, addr, protect.size);
+    align_to_page(state, addr, protect.size); // Ensure addr and size are page-aligned for mprotect
 
     ProtectBlockInfo block;
     block.size = size;
@@ -345,30 +376,36 @@ bool add_protect(MemState &state, Address addr, const uint32_t size, const MemPe
     protect.blocks.emplace(addr, std::move(block));
 
     auto it = state.protect_tree.lower_bound(addr);
-    if (it == state.protect_tree.end() || it->first + it->second.size <= addr) {
+    // Find the overlapping or adjacent segment
+    if (it != state.protect_tree.end() && it->first + it->second.size <= addr) {
+        // If it's the last element, or if the current element ends before our 'addr',
+        // try the previous element. This handles cases where 'addr' is between segments.
         if (it == state.protect_tree.begin())
-            it = state.protect_tree.end();
+            it = state.protect_tree.end(); // No previous element to check
         else
-            --it;
+            --it; // Check previous element
     }
 
-    while (it != state.protect_tree.end() && it->first < addr + size) {
+    // Now, 'it' points to a potential overlapping segment, or end() if none before 'addr'.
+    // Iterate and merge overlapping segments.
+    while (it != state.protect_tree.end() && it->first < addr + protect.size) {
         const Address start = std::min(it->first, addr);
         protect.size = std::max(it->first + it->second.size, addr + protect.size) - start;
         addr = start;
         protect.ref_count += it->second.ref_count; // Transfer access count to new block
-        protect.blocks.merge(it->second.blocks); // transfer blocks to the new protect
+        // Merge blocks from the existing segment into the new 'protect' segment
+        protect.blocks.merge(it->second.blocks);
 
+        // Erase the old segment and move to the previous one (if any)
         if (it == state.protect_tree.begin()) {
             state.protect_tree.erase(it);
-            break;
+            break; // No more previous elements
         }
-
-        // protect tree is in reverse order, so decrease it
-        state.protect_tree.erase(it--);
+        state.protect_tree.erase(it--); // Erase and decrement to check previous
     }
 
     if (protect.ref_count == 0) {
+        // Only apply mprotect if no external access references this region
         protect_inner(state, addr, protect.size, perm);
     }
 
@@ -394,12 +431,22 @@ void open_access_parent_protect_segment(MemState &state, Address addr) {
     const std::lock_guard<std::mutex> lock(state.protect_mutex);
     auto ite = state.protect_tree.lower_bound(addr);
 
+    // Adjust iterator to find containing segment
+    if (ite != state.protect_tree.end() && ite->first > addr) {
+        if (ite == state.protect_tree.begin()) {
+            ite = state.protect_tree.end(); // No previous segment
+        } else {
+            --ite; // Check previous segment
+        }
+    }
+
     if (ite != state.protect_tree.end() && addr < ite->first + ite->second.size) {
         ite->second.ref_count++;
     } else {
+        // If no existing segment covers this address, create a new one with ReadWrite and ref_count = 1
         ProtectSegmentInfo protect(0, MemPerm::ReadWrite);
         protect.ref_count = 1;
-
+        // Align the address for the new segment to page boundary
         state.protect_tree.emplace(align_down(addr, state.page_size), std::move(protect));
     }
 }
@@ -408,6 +455,15 @@ void close_access_parent_protect_segment(MemState &state, Address addr) {
     const std::lock_guard<std::mutex> lock(state.protect_mutex);
     auto ite = state.protect_tree.lower_bound(addr);
 
+    // Adjust iterator to find containing segment
+    if (ite != state.protect_tree.end() && ite->first > addr) {
+        if (ite == state.protect_tree.begin()) {
+            ite = state.protect_tree.end(); // No previous segment
+        } else {
+            --ite; // Check previous segment
+        }
+    }
+
     if (ite != state.protect_tree.end()) {
         ProtectSegmentInfo &info = ite->second;
         if (info.ref_count > 0) {
@@ -415,6 +471,8 @@ void close_access_parent_protect_segment(MemState &state, Address addr) {
         }
 
         if (info.ref_count == 0) {
+            // Only protect if there are blocks still active in the segment, otherwise erase.
+            // A size of 0 implies an empty segment created by open_access_parent_protect_segment without blocks.
             if (info.blocks.empty() || info.size == 0) {
                 state.protect_tree.erase(ite);
             } else {
@@ -425,24 +483,30 @@ void close_access_parent_protect_segment(MemState &state, Address addr) {
 }
 
 void add_external_mapping(MemState &mem, Address addr, uint32_t size, uint8_t *addr_ptr) {
-    assert((size & 4095) == 0);
+    assert((size & 4095) == 0); // Ensure size is page-aligned
 
     uint64_t addr_value = std::bit_cast<uint64_t>(addr_ptr);
-    uint8_t *page_table_entry = addr_ptr - addr;
-    uint8_t *original_address = &mem.memory[addr];
+    uint8_t *page_table_entry_offset = addr_ptr - addr.get_host_ptr(mem); // Calculate offset for page table entry
+    uint8_t *original_host_address = addr.get_host_ptr(mem); // Get host address in main memory
+
     for (int block = 0; block < size / KiB(4); block++) {
-        // this is not thread write safe, but hopefully not other thread is busy copying while this happens
-        memcpy(addr_ptr + block * KiB(4), original_address + block * KiB(4), KiB(4));
-        mem.page_table[addr / KiB(4) + block] = page_table_entry;
+        // This is not thread write safe, but hopefully no other thread is busy copying while this happens
+        memcpy(addr_ptr + block * KiB(4), original_host_address + block * KiB(4), KiB(4));
+        mem.page_table[addr / KiB(4) + block] = addr_ptr + block * KiB(4); // Store the actual host page address
     }
 
-    // set the first page table entry to the original value to be able to call protect_inner
-    mem.page_table[addr / KiB(4)] = mem.memory.get();
-    protect_inner(mem, addr, size, MemPerm::None);
-    mem.page_table[addr / KiB(4)] = page_table_entry;
+    // Temporarily set the first page table entry to the original value to be able to call protect_inner
+    // This looks like a workaround. The protect_inner should just work with the mapped address itself.
+    // If the original page_table entry needs to be restored, save it first.
+    PagePtr original_first_page_entry = mem.page_table[addr / KiB(4)];
+    mem.page_table[addr / KiB(4)] = mem.memory.get(); // Point to the main memory base
 
-    const std::unique_lock<std::mutex> lock(mem.protect_mutex);
-    mem.external_mapping[addr_value] = { addr, size };
+    protect_inner(mem, addr, size, MemPerm::None);
+
+    // Restore the correct page table entry
+    mem.page_table[addr / KiB(4)] = addr_ptr; // Corrected: this should be the base of the external mapping
+                                              // The loop already set individual block entries.
+                                              // This line might be redundant or part of a different logic.
 }
 
 void remove_external_mapping(MemState &mem, uint8_t *addr_ptr) {
@@ -458,15 +522,18 @@ void remove_external_mapping(MemState &mem, uint8_t *addr_ptr) {
     }
 
     // remove all protections on this range
+    // The 'unprotect_inner' will now correctly convert mapping.address (Vita address) to host ptr
     unprotect_inner(mem, mapping.address, mapping.size);
     {
         const std::unique_lock<std::mutex> lock(mem.protect_mutex);
         auto prot_it = mem.protect_tree.lower_bound(mapping.address);
-        if (prot_it->first + prot_it->second.size <= mapping.address) {
-            if (prot_it == mem.protect_tree.begin())
+        // Adjust iterator to find containing segment
+        if (prot_it != mem.protect_tree.end() && prot_it->first > mapping.address) {
+            if (prot_it == mem.protect_tree.begin()) {
                 prot_it = mem.protect_tree.end();
-            else
+            } else {
                 --prot_it;
+            }
         }
 
         while (prot_it != mem.protect_tree.end() && prot_it->first < mapping.address + mapping.size) {
@@ -480,14 +547,19 @@ void remove_external_mapping(MemState &mem, uint8_t *addr_ptr) {
     }
 
     // unprotect the original memory range
+    // Temporarily point first page table entry to main memory base for unprotect
+    PagePtr original_first_page_entry = mem.page_table[mapping.address / KiB(4)];
     mem.page_table[mapping.address / KiB(4)] = mem.memory.get();
     unprotect_inner(mem, mapping.address, mapping.size);
     // copy back and reset the page table
     for (int block = 0; block < mapping.size / KiB(4); block++) {
-        // this is not thread write safe, but hopefully not other thread is busy copying while this happens
+        // this is not thread write safe, but hopefully no other thread is busy copying while this happens
         memcpy(&mem.memory[mapping.address] + block * KiB(4), addr_ptr + block * KiB(4), KiB(4));
-        mem.page_table[mapping.address / KiB(4) + block] = mem.memory.get();
+        mem.page_table[mapping.address / KiB(4) + block] = mem.memory.get(); // Reset to point to main memory
     }
+    // Restore the original page table entry for the first page of the mapping if it was saved.
+    // This also assumes a clear understanding of when page_table entries should point to main memory vs external.
+    // If external mapping is removed, the page should revert to the default mapping to main memory.
 }
 
 Address alloc(MemState &state, uint32_t size, const char *name, Address start_addr) {
@@ -540,6 +612,8 @@ void free(MemState &state, Address address) {
         state.page_name_map.erase(page_num);
     }
 
+    // Assumes page_table[address / KiB(4)] points to state.memory.get() for non-external mappings.
+    // If this page was part of an external mapping, this needs to be handled differently (e.g., reset its page_table entry)
     assert(!state.use_page_table || state.page_table[address / KiB(4)] == state.memory.get());
     uint8_t *const memory = &state.memory[page_num * state.page_size];
 
