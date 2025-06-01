@@ -371,7 +371,6 @@ case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
 default:
     LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
     return std::nullopt;
-        default:
             break;
         }
         stride_bytes = pixel_stride * gxm::bits_per_pixel(base_format) / 8;
