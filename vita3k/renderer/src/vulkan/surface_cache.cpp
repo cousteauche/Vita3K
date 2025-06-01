@@ -361,6 +361,16 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
         case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
             pixel_stride = next_power_of_two(pixel_stride);
             break;
+        case SCE_GXM_TEXTURE_SWIZZLED:
+case SCE_GXM_TEXTURE_CUBE:
+case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
+    // Depth/stencil should never be swizzled, but handle it gracefully
+    LOG_WARN("Unexpected texture type {} for depth/stencil surface", static_cast<int>(texture.texture_type()));
+    return std::nullopt;
+default:
+    LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
+    return std::nullopt;
         default:
             break;
         }
@@ -749,6 +759,23 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_depth_stencil_as_tex
         tiling = SurfaceTiling::Tiled;
         stride_samples = align(memory_width, 32);
         break;
+    case SCE_GXM_TEXTURE_LINEAR_STRIDED:
+    tiling = SurfaceTiling::Linear;
+    pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel;
+    break;
+case SCE_GXM_TEXTURE_SWIZZLED:
+case SCE_GXM_TEXTURE_CUBE:
+case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
+    LOG_WARN("Unsupported texture type {} for color surface, treating as linear", static_cast<int>(texture.texture_type()));
+    tiling = SurfaceTiling::Linear;
+    pixel_stride = align(pixel_stride, 8);
+    break;
+default:
+    LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
+    tiling = SurfaceTiling::Linear;
+    pixel_stride = align(pixel_stride, 8);
+    break;
     default:
         // a depth/stencil is never swizzled
         return std::nullopt;

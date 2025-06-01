@@ -327,6 +327,26 @@ void sync_texture(GLState &state, GLContext &context, MemState &mem, std::size_t
                 // tiles are 32x32
                 stride_in_pixels = align(stride_in_pixels, 32);
                 break;
+            }  // END OF SWITCH - ADD CLOSING BRACE HERE
+            case SCE_GXM_TEXTURE_SWIZZLED:
+                // Swizzled textures - treat as linear for now
+                LOG_WARN("Swizzled texture type not fully implemented, treating as linear");
+                stride_in_pixels = align(stride_in_pixels, 8);
+                break;
+            case SCE_GXM_TEXTURE_CUBE:
+                // Cube textures - treat as linear for now
+                LOG_WARN("Cube texture type not fully implemented, treating as linear");
+                stride_in_pixels = align(stride_in_pixels, 8);
+                break;
+            case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+                // Arbitrary swizzled - treat as linear for now
+                LOG_WARN("Arbitrary swizzled texture not implemented, treating as linear");
+                stride_in_pixels = align(stride_in_pixels, 8);
+                break;
+            default:
+                LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
+                stride_in_pixels = align(stride_in_pixels, 8); // Safe default
+                break;
             }
 
             std::uint32_t swizz_raw = 0;

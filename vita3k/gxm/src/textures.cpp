@@ -17,6 +17,7 @@
 
 #include <gxm/types.h>
 #include <util/align.h>
+#include <util/log.h>
 
 #include <bit>
 #include <cassert>
@@ -210,9 +211,13 @@ uint32_t bits_per_pixel(SceGxmTextureBaseFormat base_format) {
     case SCE_GXM_TEXTURE_BASE_FORMAT_U8U8U8:
     case SCE_GXM_TEXTURE_BASE_FORMAT_S8S8S8:
         return 24;
+    case SCE_GXM_TEXTURE_BASE_FORMAT_INVALID:
+        LOG_ERROR("Invalid texture base format");
+        return 0;
+    default:
+        LOG_ERROR("Unknown texture base format: {}", static_cast<int>(base_format));
+        return 0;
     }
-
-    return 0;
 }
 
 std::pair<uint32_t, uint32_t> get_block_size(SceGxmTextureBaseFormat base_format) {
