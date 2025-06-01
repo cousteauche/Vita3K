@@ -1,0 +1,4286 @@
+From 478fdde4cda768664cdfee9e80cff134ff1d939e Mon Sep 17 00:00:00 2001
+From: Narr the Reg <5944268+german77@users.noreply.github.com>
+Date: Wed, 18 Dec 2024 13:54:50 -0600
+Subject: [PATCH 1/4] config: Add adhoc network configuration
+
+Co-authored-by: EXtremeExploit <pedro.montes.alcalde@gmail.com>
+---
+ vita3k/config/include/config/config.h |  1 +
+ vita3k/gui/src/settings_dialog.cpp    | 30 +++++++++++
+ vita3k/util/include/util/net_utils.h  |  9 ++++
+ vita3k/util/src/net_utils.cpp         | 75 +++++++++++++++++++++++++++
+ 4 files changed, 115 insertions(+)
+
+diff --git a/vita3k/config/include/config/config.h b/vita3k/config/include/config/config.h
+index 3c0219051d..e54b1468d8 100644
+--- a/vita3k/config/include/config/config.h
++++ b/vita3k/config/include/config/config.h
+@@ -161,6 +161,7 @@ enum ScreenshotFormat {
+     code(int, "http-timeout-sleep-ms", 100, http_timeout_sleep_ms)                                      \
+     code(int, "http-read-end-attempts", 10, http_read_end_attempts)                                     \
+     code(int, "http-read-end-sleep-ms", 250, http_read_end_sleep_ms)                                    \
++    code(int, "adhoc-addr", 0, adhoc_addr)                                                              \
+     code(bool, "tracy-primitive-impl", false, tracy_primitive_impl)
+ 
+ // Vector members produced in the config file
+diff --git a/vita3k/gui/src/settings_dialog.cpp b/vita3k/gui/src/settings_dialog.cpp
+index 0f2b7cc7ba..a663196b3f 100644
+--- a/vita3k/gui/src/settings_dialog.cpp
++++ b/vita3k/gui/src/settings_dialog.cpp
+@@ -16,6 +16,7 @@
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
+ #include "private.h"
++#include "util/net_utils.h"
+ 
+ #include <app/functions.h>
+ #include <audio/state.h>
+@@ -1093,6 +1094,35 @@ void draw_settings_dialog(GuiState &gui, EmuEnvState &emuenv) {
+         ImGui::Checkbox(lang.network["psn_signed_in"].c_str(), &config.psn_signed_in);
+         SetTooltipEx(lang.network["psn_signed_in_description"].c_str());
+ 
++        // Adhoc
++        ImGui::Spacing();
++        ImGui::Separator();
++        ImGui::Spacing();
++        const auto adhoc = ImGui::CalcTextSize("Adhoc").x;
++        ImGui::SetCursorPosX((ImGui::GetWindowWidth() / 2.f) - (adhoc / 2.f));
++        ImGui::TextColored(GUI_COLOR_TEXT_MENUBAR, "Adhoc");
++        ImGui::Spacing();
++
++        std::vector<const char *> addrsSelect;
++        std::vector<const char *> nMaskSelect;
++        std::vector<std::string> addrsStrings;
++        std::vector<net_utils::AssignedAddr> addrs;
++        net_utils::getAllAssignedAddrs(addrs);
++
++        for (auto &addr : addrs) {
++            addrsStrings.emplace_back(addr.addr + " (" + addr.name + ")");
++            addrsSelect.emplace_back(addrsStrings.back().c_str());
++            nMaskSelect.emplace_back(addr.netMask.c_str());
++        }
++
++        ImGui::Combo("Network Address", &emuenv.cfg.adhoc_addr, addrsSelect.data(), static_cast<int>(addrsSelect.size()));
++        if (ImGui::IsItemHovered())
++            ImGui::SetTooltip("Select which Address to use in adhoc.");
++
++        ImGui::BeginDisabled();
++        ImGui::Combo("Network Mask", &emuenv.cfg.adhoc_addr, nMaskSelect.data(), static_cast<int>(nMaskSelect.size()));
++        ImGui::EndDisabled();
++
+         // HTTP
+         ImGui::Spacing();
+         ImGui::Separator();
+diff --git a/vita3k/util/include/util/net_utils.h b/vita3k/util/include/util/net_utils.h
+index 74769495f9..0645fb7f46 100644
+--- a/vita3k/util/include/util/net_utils.h
++++ b/vita3k/util/include/util/net_utils.h
+@@ -44,6 +44,13 @@ struct ProgressData {
+     uint64_t time;
+     uint64_t bytes_already_downloaded;
+ };
++
++struct AssignedAddr {
++    std::string name; // Name of the interface
++    std::string addr; // Assigned address
++    std::string netMask; // Network mask
++};
++
+ typedef const std::function<ProgressState *(float, uint64_t)> &ProgressCallback;
+ typedef std::pair<ProgressData, ProgressCallback> CallbackData;
+ 
+@@ -61,4 +68,6 @@ bool parseResponse(const std::string &response, SceRequestResponse &reqres);
+ 
+ bool socketSetBlocking(int sockfd, bool blocking);
+ 
++void getAllAssignedAddrs(std::vector<AssignedAddr> &outAddrs);
++
+ } // namespace net_utils
+diff --git a/vita3k/util/src/net_utils.cpp b/vita3k/util/src/net_utils.cpp
+index 9f5ab4fcb8..5846b682ba 100644
+--- a/vita3k/util/src/net_utils.cpp
++++ b/vita3k/util/src/net_utils.cpp
+@@ -15,14 +15,20 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include "util/log.h"
+ #include <util/net_utils.h>
+ 
+ #include <curl/curl.h>
+ 
+ #ifdef _WIN32
++#include <iphlpapi.h>
+ #include <winsock2.h>
+ #else
++#include <arpa/inet.h>
+ #include <fcntl.h>
++#include <ifaddrs.h>
++#include <net/if.h>
++#include <netinet/in.h>
+ #endif
+ 
+ #include <condition_variable>
+@@ -471,4 +477,73 @@ bool download_file(const std::string &url, const std::string &output_file_path,
+     return res == CURLE_OK;
+ }
+ 
++void getAllAssignedAddrs(std::vector<AssignedAddr> &outAddrs) {
++    outAddrs.clear();
++#ifdef _WIN32
++    PIP_ADAPTER_INFO pAdapterInfo;
++    DWORD dwRetVal = 0;
++    UINT i;
++    ULONG ulOutBufLen = sizeof(IP_ADAPTER_INFO);
++    pAdapterInfo = (IP_ADAPTER_INFO *)malloc(sizeof(IP_ADAPTER_INFO));
++    if (pAdapterInfo == NULL) {
++        LOG_CRITICAL("Error allocating memory needed to call GetAdaptersinfo");
++        return;
++    }
++    // Make an initial call to GetAdaptersInfo to get the necessary size into the ulOutBufLen variable
++    if (GetAdaptersInfo(pAdapterInfo, &ulOutBufLen) == ERROR_BUFFER_OVERFLOW) {
++        free(pAdapterInfo);
++        pAdapterInfo = (IP_ADAPTER_INFO *)malloc(ulOutBufLen);
++        if (pAdapterInfo == NULL) {
++            LOG_CRITICAL("Error allocating memory needed to call GetAdaptersinfo");
++            return;
++        }
++    }
++    if ((dwRetVal = GetAdaptersInfo(pAdapterInfo, &ulOutBufLen)) == NO_ERROR) {
++        PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
++        const std::string noAddress = "0.0.0.0";
++        while (pAdapter) {
++            IP_ADDR_STRING *pIPAddr = &pAdapter->IpAddressList;
++            while (pIPAddr) {
++                if (noAddress.compare(pIPAddr->IpAddress.String) != 0)
++                    outAddrs.push_back({ pAdapter->Description, pIPAddr->IpAddress.String, pIPAddr->IpMask.String });
++                pIPAddr = pIPAddr->Next;
++            }
++            pAdapter = pAdapter->Next;
++        }
++    } else {
++        LOG_CRITICAL("GetAdaptersInfo failed with error: %d", dwRetVal);
++    }
++    if (outAddrs.size() == 0)
++        outAddrs.push_back({ "localhost", "127.0.0.1", "255.255.255.255" });
++#else
++    struct ifaddrs *ifAddrStruct = NULL;
++    struct ifaddrs *ifa = NULL;
++    void *tmpAddrPtr = NULL;
++
++    getifaddrs(&ifAddrStruct);
++
++    for (ifa = ifAddrStruct; ifa != NULL; ifa = ifa->ifa_next) {
++        if (!ifa->ifa_addr)
++            continue;
++        if ((ifa->ifa_flags & IFF_LOOPBACK) != 0)
++            continue;
++        if (ifa->ifa_flags)
++            if (ifa->ifa_addr->sa_family == AF_INET) { // check it is IP4
++                char netMaskAddrStr[INET_ADDRSTRLEN];
++                auto netMaskAddr = ((sockaddr_in *)ifa->ifa_netmask)->sin_addr;
++                inet_ntop(AF_INET, &netMaskAddr, netMaskAddrStr, INET_ADDRSTRLEN);
++                // is a valid IP4 Address
++                tmpAddrPtr = &((sockaddr_in *)ifa->ifa_addr)->sin_addr;
++                char addressBuffer[INET_ADDRSTRLEN];
++                inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
++                outAddrs.push_back({ ifa->ifa_name, addressBuffer, netMaskAddrStr });
++            }
++    }
++    if (ifAddrStruct != NULL)
++        freeifaddrs(ifAddrStruct);
++    if (outAddrs.size() == 0)
++        outAddrs.push_back({ "lo", "127.0.0.1", "255.255.255.255" });
++#endif
++}
++
+ } // namespace net_utils
+
+From a7a62c1881ad02e8013d96b4bca7448009275932 Mon Sep 17 00:00:00 2001
+From: Narr the Reg <5944268+german77@users.noreply.github.com>
+Date: Wed, 18 Dec 2024 15:19:23 -0600
+Subject: [PATCH 2/4] net: Implement socket features necessary for adhoc
+
+Co-authored-by: EXtremeExploit <pedro.montes.alcalde@gmail.com>
+---
+ vita3k/modules/SceNet/SceNet.cpp       | 60 ++++++++++++++++++++++----
+ vita3k/modules/SceNet/SceNet.h         |  9 ++++
+ vita3k/modules/SceNetCtl/SceNetCtl.cpp | 51 +++++++++++++---------
+ vita3k/net/include/net/socket.h        |  5 +++
+ vita3k/net/include/net/types.h         |  2 +
+ vita3k/net/src/p2psocket.cpp           |  4 ++
+ vita3k/net/src/posixsocket.cpp         | 36 +++++++++-------
+ 7 files changed, 123 insertions(+), 44 deletions(-)
+
+diff --git a/vita3k/modules/SceNet/SceNet.cpp b/vita3k/modules/SceNet/SceNet.cpp
+index 6c91bf8d75..df9cb93ac9 100644
+--- a/vita3k/modules/SceNet/SceNet.cpp
++++ b/vita3k/modules/SceNet/SceNet.cpp
+@@ -22,6 +22,7 @@
+ #include <net/state.h>
+ #include <net/types.h>
+ #include <util/lock_and_find.h>
++#include "util/net_utils.h"
+ 
+ #include <chrono>
+ #include <thread>
+@@ -512,6 +513,15 @@ EXPORT(int, sceNetSendto, int sid, const void *msg, unsigned int len, int flags,
+     if (!sock) {
+         return RET_ERROR(SCE_NET_EBADF);
+     }
++
++    SceNetSockaddrIn broadcast_to;
++    memcpy(&broadcast_to, to, sizeof(SceNetSockaddrIn));
++
++    if (broadcast_to.sin_addr.s_addr == INADDR_BROADCAST) {
++        broadcast_to.sin_addr.s_addr = sock->broadcastAddr;
++        return sock->send_packet(msg, len, flags, (SceNetSockaddr *)&broadcast_to, tolen);
++    }
++
+     return sock->send_packet(msg, len, flags, to, tolen);
+ }
+ 
+@@ -520,7 +530,7 @@ EXPORT(int, sceNetSetDnsInfo) {
+     return UNIMPLEMENTED();
+ }
+ 
+-EXPORT(int, sceNetSetsockopt, int sid, SceNetProtocol level, SceNetSocketOption optname, const int *optval, unsigned int optlen) {
++EXPORT(int, sceNetSetsockopt, int sid, SceNetProtocol level, SceNetSocketOption optname, const char *optval, unsigned int optlen) {
+     TRACY_FUNC(sceNetSetsockopt, sid, level, optname, *optval, optlen);
+     auto sock = lock_and_find(sid, emuenv.net.socks, emuenv.kernel.mutex);
+     if (!sock) {
+@@ -551,9 +561,14 @@ EXPORT(int, sceNetShowRoute) {
+     return UNIMPLEMENTED();
+ }
+ 
+-EXPORT(int, sceNetShutdown) {
+-    TRACY_FUNC(sceNetShutdown);
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetShutdown, int sid, int how) {
++    TRACY_FUNC(sceNetShutdown, sid, how);
++    LOG_INFO("sceNetShutdown");
++    auto sock = lock_and_find(sid, emuenv.net.socks, emuenv.kernel.mutex);
++    if (!sock) {
++        return RET_ERROR(SCE_NET_EBADF);
++    }
++    return sock->shutdown_socket(how);
+ }
+ 
+ EXPORT(int, sceNetSocket, const char *name, int domain, SceNetSocketType type, SceNetProtocol protocol) {
+@@ -564,14 +579,39 @@ EXPORT(int, sceNetSocket, const char *name, int domain, SceNetSocketType type, S
+     } else {
+         sock = std::make_shared<PosixSocket>(domain, type, protocol);
+     }
++
++    std::vector<net_utils::AssignedAddr> addrs;
++    net_utils::getAllAssignedAddrs(addrs);
++    std::size_t selectedInterface = emuenv.cfg.adhoc_addr;
++
++    if (selectedInterface >= addrs.size()) {
++        LOG_INFO("Invalid interface selected");
++        selectedInterface = 0;
++    }
++
++    const auto addr = addrs[selectedInterface];
++    int netAddr, netMask;
++    inet_pton(AF_INET, addr.addr.c_str(), &netAddr);
++    inet_pton(AF_INET, addr.netMask.c_str(), &netMask);
++    sock->broadcastAddr = netAddr | ~netMask;
++
+     auto id = ++emuenv.net.next_id;
+     emuenv.net.socks.emplace(id, sock);
+     return id;
+ }
+ 
+-EXPORT(int, sceNetSocketAbort) {
+-    TRACY_FUNC(sceNetSocketAbort);
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetSocketAbort, int sid) {
++    TRACY_FUNC(sceNetSocketAbort, sid);
++    LOG_INFO("sceNetSocketAbort");
++    auto sock = lock_and_find(sid, emuenv.net.socks, emuenv.kernel.mutex);
++    if (!sock) {
++        return RET_ERROR(SCE_NET_EBADF);
++    }
++#ifdef _WIN32
++    return sock->shutdown_socket(SD_BOTH);
++#else
++    return sock->shutdown_socket(SHUT_RDWR);
++#endif
+ }
+ 
+ EXPORT(int, sceNetSocketClose, int sid) {
+@@ -580,7 +620,11 @@ EXPORT(int, sceNetSocketClose, int sid) {
+     if (!sock) {
+         return RET_ERROR(SCE_NET_EBADF);
+     }
+-    return sock->close();
++    const int result = sock->close();
++    if (result >= 0) {
++        emuenv.net.socks.erase(sid);
++    }
++    return result;
+ }
+ 
+ EXPORT(int, sceNetTerm) {
+diff --git a/vita3k/modules/SceNet/SceNet.h b/vita3k/modules/SceNet/SceNet.h
+index 8c84a8ecba..60463a1479 100644
+--- a/vita3k/modules/SceNet/SceNet.h
++++ b/vita3k/modules/SceNet/SceNet.h
+@@ -18,5 +18,14 @@
+ #pragma once
+ 
+ #include <module/module.h>
++#include <net/types.h>
+ 
+ DECL_EXPORT(int, sceNetInetPton, int af, const char *src, void *dst);
++DECL_EXPORT(int, sceNetBind, int sid, const SceNetSockaddr *addr, unsigned int addrlen);
++DECL_EXPORT(int, sceNetSocket, const char *name, int domain, SceNetSocketType type, SceNetProtocol protocol);
++DECL_EXPORT(int, sceNetSocketAbort, int sid);
++DECL_EXPORT(int, sceNetSocketClose, int sid);
++DECL_EXPORT(int, sceNetShutdown, int eid, int how);
++DECL_EXPORT(int, sceNetSendto, int sid, const void *msg, unsigned int len, int flags, const SceNetSockaddr *to, unsigned int tolen);
++DECL_EXPORT(int, sceNetSetsockopt, int sid, SceNetProtocol level, SceNetSocketOption optname, const char *optval, unsigned int optlen);
++DECL_EXPORT(int, sceNetRecvfrom, int sid, void *buf, unsigned int len, int flags, SceNetSockaddr *from, unsigned int *fromlen);
+diff --git a/vita3k/modules/SceNetCtl/SceNetCtl.cpp b/vita3k/modules/SceNetCtl/SceNetCtl.cpp
+index 959c08f4db..fde258f429 100644
+--- a/vita3k/modules/SceNetCtl/SceNetCtl.cpp
++++ b/vita3k/modules/SceNetCtl/SceNetCtl.cpp
+@@ -15,6 +15,7 @@
+ // with this program; if not, write to the Free Software Foundation, Inc.,
+ // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ 
++#include "util/net_utils.h"
+ #include <module/module.h>
+ 
+ #include <kernel/state.h>
+@@ -157,7 +158,20 @@ EXPORT(int, sceNetCtlAdhocGetInAddr, SceNetInAddr *inaddr) {
+         return RET_ERROR(SCE_NET_CTL_ERROR_INVALID_ADDR);
+     }
+ 
+-    return UNIMPLEMENTED();
++    std::vector<net_utils::AssignedAddr> addrs;
++    net_utils::getAllAssignedAddrs(addrs);
++    std::size_t selectedInterface = emuenv.cfg.adhoc_addr;
++
++    if (selectedInterface >= addrs.size()) {
++        LOG_INFO("Invalid interface selected");
++        selectedInterface = 0;
++    }
++
++    const auto addr = addrs[selectedInterface].addr.c_str();
++
++    inet_pton(AF_INET, addr, &inaddr->s_addr);
++
++    return 0;
+ }
+ 
+ EXPORT(int, sceNetCtlAdhocGetPeerList, SceSize *peerInfoNum, SceNetCtlAdhocPeerInfo *peerInfo) {
+@@ -330,23 +344,20 @@ EXPORT(int, sceNetCtlInetGetInfo, int code, SceNetCtlInfo *info) {
+         return RET_ERROR(SCE_NET_CTL_ERROR_INVALID_ADDR);
+     }
+ 
+-    switch (code) {
+-    case SCE_NETCTL_INFO_GET_IP_ADDRESS: {
+-        strcpy(info->ip_address, "127.0.0.1"); // placeholder in case gethostbyname can't find another ip
+-        char devname[80];
+-        gethostname(devname, 80);
+-        struct hostent *resolved = gethostbyname(devname);
+-        for (int i = 0; resolved->h_addr_list[i] != nullptr; ++i) {
+-            struct in_addr addrIn;
+-            memcpy(&addrIn, resolved->h_addr_list[i], sizeof(uint32_t));
+-            char *addr = inet_ntoa(addrIn);
+-            if (strcmp(addr, "127.0.0.1") != 0) {
+-                strcpy(info->ip_address, addr);
+-                break;
+-            }
+-        }
+-        break;
++    std::vector<net_utils::AssignedAddr> addrs;
++    net_utils::getAllAssignedAddrs(addrs);
++    std::size_t selectedInterface = emuenv.cfg.adhoc_addr;
++
++    if (selectedInterface >= addrs.size()) {
++        LOG_INFO("Invalid interface selected");
++        selectedInterface = 0;
+     }
++
++    const auto addr = addrs[selectedInterface];
++
++    switch (code) {
++    case SCE_NETCTL_INFO_GET_IP_ADDRESS:
++        inet_pton(AF_INET, addr.addr.c_str(), &info->ip_address);
+     case SCE_NETCTL_INFO_GET_DEVICE:
+         info->device = 0; /*SCE_NET_CTL_DEVICE_WIRELESS*/
+         // STUBBED("SCE_NETCTL_INFO_GET_DEVICE return SCE_NET_CTL_DEVICE_WIRELESS");
+@@ -355,6 +366,9 @@ EXPORT(int, sceNetCtlInetGetInfo, int code, SceNetCtlInfo *info) {
+         info->rssi_percentage = 100;
+         // STUBBED("code SCE_NETCTL_INFO_GET_RSSI_PERCENTAGE return 100%");
+         break;
++    case SCE_NETCTL_INFO_GET_NETMASK:
++        inet_pton(AF_INET, addr.netMask.c_str(), &info->netmask);
++        break;
+     default:
+         switch (code) {
+         case SCE_NETCTL_INFO_GET_CNF_NAME:
+@@ -393,9 +407,6 @@ EXPORT(int, sceNetCtlInetGetInfo, int code, SceNetCtlInfo *info) {
+         case SCE_NETCTL_INFO_GET_PPPOE_AUTH_NAME:
+             STUBBED("code SCE_NETCTL_INFO_GET_PPPOE_AUTH_NAME not implemented");
+             break;
+-        case SCE_NETCTL_INFO_GET_NETMASK:
+-            STUBBED("code SCE_NETCTL_INFO_GET_NETMASK not implemented");
+-            break;
+         case SCE_NETCTL_INFO_GET_DEFAULT_ROUTE:
+             STUBBED("code SCE_NETCTL_INFO_GET_DEFAULT_ROUTE not implemented");
+             break;
+diff --git a/vita3k/net/include/net/socket.h b/vita3k/net/include/net/socket.h
+index 1ad138baf6..1a93949def 100644
+--- a/vita3k/net/include/net/socket.h
++++ b/vita3k/net/include/net/socket.h
+@@ -45,11 +45,14 @@ struct Socket;
+ typedef std::shared_ptr<Socket> SocketPtr;
+ 
+ struct Socket {
++    int broadcastAddr = 0;
++
+     explicit Socket(int domain, int type, int protocol) {}
+ 
+     virtual ~Socket() = default;
+ 
+     virtual int close() = 0;
++    virtual int shutdown_socket(int how) = 0;
+     virtual int bind(const SceNetSockaddr *addr, unsigned int addrlen) = 0;
+     virtual int send_packet(const void *msg, unsigned int len, int flags, const SceNetSockaddr *to, unsigned int tolen) = 0;
+     virtual int recv_packet(void *buf, unsigned int len, int flags, SceNetSockaddr *from, unsigned int *fromlen) = 0;
+@@ -84,6 +87,7 @@ struct PosixSocket : public Socket {
+         , sock(sock) {}
+ 
+     int close() override;
++    int shutdown_socket(int how) override;
+     int bind(const SceNetSockaddr *addr, unsigned int addrlen) override;
+     int send_packet(const void *msg, unsigned int len, int flags, const SceNetSockaddr *to, unsigned int tolen) override;
+     int recv_packet(void *buf, unsigned int len, int flags, SceNetSockaddr *from, unsigned int *fromlen) override;
+@@ -100,6 +104,7 @@ struct P2PSocket : public Socket {
+         : Socket(domain, type, protocol) {}
+ 
+     int close() override;
++    int shutdown_socket(int how) override;
+     int bind(const SceNetSockaddr *addr, unsigned int addrlen) override;
+     int send_packet(const void *msg, unsigned int len, int flags, const SceNetSockaddr *to, unsigned int tolen) override;
+     int recv_packet(void *buf, unsigned int len, int flags, SceNetSockaddr *from, unsigned int *fromlen) override;
+diff --git a/vita3k/net/include/net/types.h b/vita3k/net/include/net/types.h
+index 2244cd91f4..bdaaf903d3 100644
+--- a/vita3k/net/include/net/types.h
++++ b/vita3k/net/include/net/types.h
+@@ -335,12 +335,14 @@ struct SceNetSockaddrIn {
+     unsigned short int sin_vport;
+     char sin_zero[6];
+ };
++static_assert(sizeof(SceNetSockaddrIn) == 16, "SceNetSockaddrIn has incorrect size");
+ 
+ struct SceNetSockaddr {
+     unsigned char sa_len;
+     unsigned char sa_family;
+     char sa_data[14];
+ };
++static_assert(sizeof(SceNetSockaddr) == 16, "SceNetSockaddr has incorrect size");
+ 
+ struct SceNetInitParam {
+     Ptr<void> memory;
+diff --git a/vita3k/net/src/p2psocket.cpp b/vita3k/net/src/p2psocket.cpp
+index 8cb5f72c0f..847ad4d0c0 100644
+--- a/vita3k/net/src/p2psocket.cpp
++++ b/vita3k/net/src/p2psocket.cpp
+@@ -21,6 +21,10 @@ int P2PSocket::close() {
+     return 0;
+ }
+ 
++int P2PSocket::shutdown_socket(int how) {
++    return 0;
++}
++
+ int P2PSocket::listen(int backlog) {
+     return 0;
+ }
+diff --git a/vita3k/net/src/posixsocket.cpp b/vita3k/net/src/posixsocket.cpp
+index abd23d6c45..5a3b6e414c 100644
+--- a/vita3k/net/src/posixsocket.cpp
++++ b/vita3k/net/src/posixsocket.cpp
+@@ -127,7 +127,8 @@ static void convertSceSockaddrToPosix(const SceNetSockaddr *src, sockaddr *dst)
+     const SceNetSockaddrIn *src_in = (const SceNetSockaddrIn *)src;
+     sockaddr_in *dst_in = (sockaddr_in *)dst;
+     dst_in->sin_family = src_in->sin_family;
+-    dst_in->sin_port = src_in->sin_port;
++    // TODO: Virtual ports doesn't exist yet. For now mix both ports to avoid binding issues.
++    dst_in->sin_port = src_in->sin_port + src_in->sin_vport;
+     memcpy(&dst_in->sin_addr, &src_in->sin_addr, 4);
+ }
+ 
+@@ -181,6 +182,10 @@ int PosixSocket::close() {
+     return translate_return_value(out);
+ }
+ 
++int PosixSocket::shutdown_socket(int how) {
++    return translate_return_value(shutdown(sock, how));
++}
++
+ SocketPtr PosixSocket::accept(SceNetSockaddr *addr, unsigned int *addrlen) {
+     sockaddr addr2;
+     abs_socket new_socket = ::accept(sock, &addr2, (socklen_t *)addrlen);
+@@ -344,24 +349,23 @@ int PosixSocket::get_socket_options(int level, int optname, void *optval, unsign
+ }
+ 
+ int PosixSocket::recv_packet(void *buf, unsigned int len, int flags, SceNetSockaddr *from, unsigned int *fromlen) {
+-    if (from != nullptr) {
+-        sockaddr addr;
+-        int res = recvfrom(sock, (char *)buf, len, flags, &addr, (socklen_t *)fromlen);
+-        convertPosixSockaddrToSce(&addr, from);
+-        *fromlen = sizeof(SceNetSockaddrIn);
+-
+-        return translate_return_value(res);
+-    } else {
+-        return translate_return_value(recv(sock, (char *)buf, len, flags));
++    if (from == nullptr) {
++        return translate_return_value(recv(sock, (char *)buf, len, 0));
+     }
++
++    sockaddr addr;
++    int res = recvfrom(sock, (char *)buf, len, 0, &addr, (socklen_t *)fromlen);
++    convertPosixSockaddrToSce(&addr, from);
++
++    return translate_return_value(res);
+ }
+ 
+ int PosixSocket::send_packet(const void *msg, unsigned int len, int flags, const SceNetSockaddr *to, unsigned int tolen) {
+-    if (to != nullptr) {
+-        sockaddr addr;
+-        convertSceSockaddrToPosix(to, &addr);
+-        return translate_return_value(sendto(sock, (const char *)msg, len, flags, &addr, sizeof(sockaddr_in)));
+-    } else {
+-        return translate_return_value(send(sock, (const char *)msg, len, flags));
++    if (to == nullptr) {
++        return translate_return_value(send(sock, (const char *)msg, len, 0));
+     }
++
++    sockaddr addr;
++    convertSceSockaddrToPosix(to, &addr);
++    return translate_return_value(sendto(sock, (const char *)msg, len, 0, &addr, sizeof(sockaddr_in)));
+ }
+
+From 102abebab991a8d177d1d62694505e8a832769c8 Mon Sep 17 00:00:00 2001
+From: Narr the Reg <5944268+german77@users.noreply.github.com>
+Date: Wed, 18 Dec 2024 15:53:54 -0600
+Subject: [PATCH 3/4] adhoc: Fully Implement adhoc matching
+
+Co-authored-by: EXtremeExploit <pedro.montes.alcalde@gmail.com>
+---
+ vita3k/CMakeLists.txt                         |    1 +
+ vita3k/adhoc/CMakeLists.txt                   |   20 +
+ vita3k/adhoc/include/adhoc/callbacks.h        |   23 +
+ vita3k/adhoc/include/adhoc/calloutSyncing.h   |   62 +
+ vita3k/adhoc/include/adhoc/matchingContext.h  |  378 +++++
+ vita3k/adhoc/include/adhoc/matchingTarget.h   |  100 ++
+ vita3k/adhoc/include/adhoc/state.h            |  145 ++
+ vita3k/adhoc/include/adhoc/threads.h          |   26 +
+ vita3k/adhoc/src/callbacks.cpp                |   80 +
+ vita3k/adhoc/src/calloutSyncing.cpp           |  154 ++
+ vita3k/adhoc/src/matchingContext.cpp          | 1447 +++++++++++++++++
+ vita3k/adhoc/src/matchingTarget.cpp           |  123 ++
+ vita3k/adhoc/src/state.cpp                    |  169 ++
+ vita3k/adhoc/src/threads.cpp                  |  141 ++
+ vita3k/emuenv/CMakeLists.txt                  |    2 +-
+ vita3k/emuenv/include/emuenv/state.h          |    3 +
+ vita3k/emuenv/src/emuenv.cpp                  |    6 +-
+ .../include/kernel/thread/thread_state.h      |    4 +
+ vita3k/kernel/src/thread.cpp                  |   53 +
+ vita3k/modules/CMakeLists.txt                 |    2 +-
+ vita3k/modules/SceNet/SceNet.cpp              |   28 +-
+ .../SceNetAdhocMatching.cpp                   |  391 ++++-
+ 22 files changed, 3321 insertions(+), 37 deletions(-)
+ create mode 100644 vita3k/adhoc/CMakeLists.txt
+ create mode 100644 vita3k/adhoc/include/adhoc/callbacks.h
+ create mode 100644 vita3k/adhoc/include/adhoc/calloutSyncing.h
+ create mode 100644 vita3k/adhoc/include/adhoc/matchingContext.h
+ create mode 100644 vita3k/adhoc/include/adhoc/matchingTarget.h
+ create mode 100644 vita3k/adhoc/include/adhoc/state.h
+ create mode 100644 vita3k/adhoc/include/adhoc/threads.h
+ create mode 100644 vita3k/adhoc/src/callbacks.cpp
+ create mode 100644 vita3k/adhoc/src/calloutSyncing.cpp
+ create mode 100644 vita3k/adhoc/src/matchingContext.cpp
+ create mode 100644 vita3k/adhoc/src/matchingTarget.cpp
+ create mode 100644 vita3k/adhoc/src/state.cpp
+ create mode 100644 vita3k/adhoc/src/threads.cpp
+
+diff --git a/vita3k/CMakeLists.txt b/vita3k/CMakeLists.txt
+index e254b48206..6ee2df3bc6 100644
+--- a/vita3k/CMakeLists.txt
++++ b/vita3k/CMakeLists.txt
+@@ -90,6 +90,7 @@ if(NOT MSVC)
+ 	add_compile_options(-Wformat -Werror=format-security)
+ endif()
+ 
++add_subdirectory(adhoc)
+ add_subdirectory(app)
+ add_subdirectory(audio)
+ add_subdirectory(config)
+diff --git a/vita3k/adhoc/CMakeLists.txt b/vita3k/adhoc/CMakeLists.txt
+new file mode 100644
+index 0000000000..e71e32f66d
+--- /dev/null
++++ b/vita3k/adhoc/CMakeLists.txt
+@@ -0,0 +1,20 @@
++add_library(
++    adhoc
++    STATIC
++    include/adhoc/callbacks.h
++    include/adhoc/calloutSyncing.h
++    include/adhoc/matchingContext.h
++    include/adhoc/matchingTarget.h
++    include/adhoc/state.h
++    include/adhoc/threads.h
++    src/callbacks.cpp
++    src/calloutSyncing.cpp
++    src/matchingContext.cpp
++    src/matchingTarget.cpp
++    src/state.cpp
++    src/threads.cpp
++)
++
++target_include_directories(adhoc PUBLIC include)
++target_link_libraries(adhoc PRIVATE util kernel net emuenv kernel io)
++target_link_libraries(adhoc PUBLIC modules module)
+diff --git a/vita3k/adhoc/include/adhoc/callbacks.h b/vita3k/adhoc/include/adhoc/callbacks.h
+new file mode 100644
+index 0000000000..75033735bc
+--- /dev/null
++++ b/vita3k/adhoc/include/adhoc/callbacks.h
+@@ -0,0 +1,23 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#pragma once
++
++int helloTimeoutCallback(void *args);
++int registerTargetTimeoutCallback(void *args);
++int targetTimeoutCallback(void *args);
++int sendDataTimeoutCallback(void *args);
+diff --git a/vita3k/adhoc/include/adhoc/calloutSyncing.h b/vita3k/adhoc/include/adhoc/calloutSyncing.h
+new file mode 100644
+index 0000000000..04bd70b06a
+--- /dev/null
++++ b/vita3k/adhoc/include/adhoc/calloutSyncing.h
+@@ -0,0 +1,62 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#pragma once
++
++#include <condition_variable>
++#include <mutex>
++#include <thread>
++
++#include "util/types.h"
++
++struct EmuEnvState;
++
++enum SceNetCalloutErrorCode {
++    SCE_NET_CALLOUT_OK = 0x0,
++    SCE_NET_CALLOUT_ERROR_NOT_INITIALIZED = 0x80558001,
++    SCE_NET_CALLOUT_ERROR_NOT_TERMINATED = 0x80558002,
++    SCE_NET_CALLOUT_ERROR_DUPLICATED = 0x80558006,
++};
++
++struct SceNetAdhocMatchingCalloutFunction {
++    SceNetAdhocMatchingCalloutFunction *next;
++    uint64_t execAt;
++    int (*function)(void *);
++    void *args;
++};
++
++class SceNetAdhocMatchingCalloutSyncing {
++public:
++    int initializeCalloutThread(EmuEnvState &emuenv, SceUID thread_id, SceUID id, int threadPriority, int threadStackSize, int threadCpuAffinityMask);
++    void closeCalloutThread();
++
++    int addTimedFunction(SceNetAdhocMatchingCalloutFunction *calloutFunction, SceLong64 interval, int (*function)(void *), void *args);
++    int deleteTimedFunction(SceNetAdhocMatchingCalloutFunction *calloutFunction, bool *is_deleted = nullptr);
++    int excecuteTimedFunctions();
++
++    bool isRunning() const;
++
++public:
++    SceNetAdhocMatchingCalloutFunction *functionList;
++
++private:
++    std::thread calloutThread;
++    std::mutex mutex;
++    std::condition_variable condvar;
++    bool isInitialized;
++    bool shouldExit;
++};
+diff --git a/vita3k/adhoc/include/adhoc/matchingContext.h b/vita3k/adhoc/include/adhoc/matchingContext.h
+new file mode 100644
+index 0000000000..9fdbaf4834
+--- /dev/null
++++ b/vita3k/adhoc/include/adhoc/matchingContext.h
+@@ -0,0 +1,378 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#pragma once
++
++#include <cassert>
++#include <queue>
++#include <span>
++#include <vector>
++
++#include "adhoc/calloutSyncing.h"
++#include "adhoc/state.h"
++#include "net/state.h"
++#include "util/types.h"
++
++struct EmuEnvState;
++class SceNetAdhocMatchingTarget;
++enum SceNetAdhocMatchingTargetStatus : uint32_t;
++
++enum SceNetAdhocMatchingPacketType : uint8_t {
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_ABORT = 0,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO = 1,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK = 2,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3 = 3,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK4 = 4,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL = 5,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST = 6,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST_ACK = 7,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_BYE = 8,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK9 = 9,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA = 10,
++    SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA_ACK = 11
++};
++
++enum SceNetAdhocMatchingContextStatus {
++    SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING = 0,
++    SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_STOPPING = 1,
++    SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING = 2,
++};
++
++typedef SceNetInAddr SceNetAdhocMatchingMember;
++
++struct SceNetAdhocMatchingMessageHeader {
++    uint8_t one; //! ALWAYS 1
++    SceNetAdhocMatchingPacketType type;
++    SceUShort16 packetLength;
++
++    std::vector<char> serialize() const {
++        std::vector<char> data(sizeof(SceNetAdhocMatchingMessageHeader));
++        const SceUShort16 nPacketLength = htons(packetLength);
++
++        memcpy(data.data(), &one, sizeof(uint8_t));
++        memcpy(data.data() + 0x1, &type, sizeof(SceNetAdhocMatchingPacketType));
++        memcpy(data.data() + 0x2, &nPacketLength, sizeof(SceUShort16));
++        return data;
++    }
++
++    void parse(const char *data, SceSize dataLen) {
++        assert(dataLen >= sizeof(SceNetAdhocMatchingMessageHeader));
++
++        memcpy(&one, data, sizeof(uint8_t));
++        memcpy(&type, data + 0x1, sizeof(SceNetAdhocMatchingPacketType));
++        memcpy(&packetLength, data + 0x2, sizeof(SceUShort16));
++        packetLength = htons(packetLength);
++    }
++};
++static_assert(sizeof(SceNetAdhocMatchingMessageHeader) == 0x4, "SceNetAdhocMatchingMessageHeader is an invalid size");
++
++struct SceNetAdhocMatchingDataMessage {
++    SceNetAdhocMatchingMessageHeader header;
++    SceUID targetId;
++    SceUID packetId;
++    std::vector<char> dataBuffer;
++
++    std::size_t messageSize() const {
++        return sizeof(header) + dataBuffer.size() + 0x8;
++    }
++
++    std::vector<char> serialize() const {
++        std::vector<char> data = header.serialize();
++        data.resize(messageSize());
++
++        const SceUID ntargetId = htonl(targetId);
++        const int nPacketId = htonl(packetId);
++        memcpy(data.data() + sizeof(header), &ntargetId, sizeof(SceUID));
++        memcpy(data.data() + sizeof(header) + 0x4, &nPacketId, sizeof(SceUID));
++        memcpy(data.data() + sizeof(header) + 0x8, dataBuffer.data(), dataBuffer.size());
++        return data;
++    }
++
++    void parse(const char *data, SceSize dataLen) {
++        assert(dataLen >= sizeof(header) + 0x8);
++        dataBuffer.resize(dataLen - sizeof(header) - 0x8);
++
++        header.parse(data, dataLen);
++        memcpy(dataBuffer.data(), data + sizeof(header), dataBuffer.size());
++        memcpy(&targetId, data + sizeof(header), sizeof(SceUID));
++        memcpy(&packetId, data + sizeof(header) + 0x4, sizeof(SceUID));
++        memcpy(dataBuffer.data(), data + sizeof(header) + 0x8, dataBuffer.size());
++        targetId = htonl(targetId);
++        packetId = htonl(packetId);
++    }
++};
++
++struct SceNetAdhocMatchingOptMessage {
++    SceNetAdhocMatchingMessageHeader header;
++    std::vector<char> dataBuffer;
++    int targetCount;
++    std::array<char, 0xc> padding;
++
++    std::size_t messageSize() const {
++        return sizeof(header) + dataBuffer.size() + 0x10;
++    }
++
++    std::vector<char> serialize() const {
++        std::vector<char> data = header.serialize();
++        data.resize(messageSize());
++
++        const int nTargetCount = htonl(targetCount);
++        memcpy(data.data() + sizeof(header), dataBuffer.data(), dataBuffer.size());
++        memcpy(data.data() + sizeof(header) + dataBuffer.size(), &nTargetCount, sizeof(int));
++        memcpy(data.data() + sizeof(header) + dataBuffer.size() + 0x4, padding.data(), padding.size());
++        return data;
++    }
++
++    void parse(const char *data, SceSize dataLen) {
++        assert(dataLen >= sizeof(header));
++        dataBuffer.resize(dataLen - sizeof(header) - 0x10);
++
++        header.parse(data, dataLen);
++        memcpy(dataBuffer.data(), data + sizeof(header), dataBuffer.size());
++        memcpy(&targetCount, data + sizeof(header) + dataBuffer.size(), sizeof(int));
++        memcpy(padding.data(), data + sizeof(header) + dataBuffer.size() + 0x4, padding.size());
++        targetCount = htonl(targetCount);
++    }
++};
++
++struct SceNetAdhocMatchingHelloMessage {
++    SceNetAdhocMatchingMessageHeader header;
++    int helloInterval;
++    int rexmtInterval;
++    std::vector<char> optBuffer;
++    bool unk_6c;
++    std::array<char, 0xf> padding;
++
++    std::size_t messageSize() const {
++        return sizeof(header) + optBuffer.size() + 0x18;
++    }
++
++    std::vector<char> serialize() const {
++        std::vector<char> data = header.serialize();
++        data.resize(messageSize());
++
++        const int nhelloInterval = htonl(helloInterval);
++        const int nrexmtInterval = htonl(rexmtInterval);
++        memcpy(data.data() + sizeof(header), &nhelloInterval, sizeof(int));
++        memcpy(data.data() + sizeof(header) + 0x4, &nrexmtInterval, sizeof(int));
++        memcpy(data.data() + sizeof(header) + 0x8, optBuffer.data(), optBuffer.size());
++        memcpy(data.data() + sizeof(header) + 0x8 + optBuffer.size(), &unk_6c, sizeof(bool));
++        memcpy(data.data() + sizeof(header) + 0x9 + optBuffer.size(), padding.data(), sizeof(0xf));
++        return data;
++    }
++
++    void parse(const char *data, SceSize dataLen) {
++        assert(dataLen >= sizeof(header) + 0x8);
++        optBuffer.resize(dataLen - sizeof(header) - 0x18);
++
++        header.parse(data, dataLen);
++        memcpy(&helloInterval, data + sizeof(header), sizeof(int));
++        memcpy(&rexmtInterval, data + sizeof(header) + 0x4, sizeof(int));
++        memcpy(optBuffer.data(), data + sizeof(header) + 0x8, optBuffer.size());
++        memcpy(&unk_6c, data + sizeof(header) + 0x8 + optBuffer.size(), sizeof(bool));
++        memcpy(padding.data(), data + sizeof(header) + 0x9 + optBuffer.size(), sizeof(0xf));
++        helloInterval = htonl(helloInterval);
++        rexmtInterval = htonl(rexmtInterval);
++    }
++};
++
++struct SceNetAdhocMatchingMemberMessage {
++    SceNetAdhocMatchingMessageHeader header;
++    SceNetInAddr parent;
++    std::vector<SceNetInAddr> members;
++
++    std::size_t messageSize() const {
++        const std::size_t memberSize = members.size() * sizeof(SceNetInAddr);
++        return sizeof(header) + sizeof(parent) + memberSize;
++    }
++
++    std::vector<char> serialize() const {
++        std::vector<char> data = header.serialize();
++        data.resize(messageSize());
++        memcpy(data.data() + sizeof(header), &parent, sizeof(SceNetInAddr));
++        memcpy(data.data() + sizeof(header) + sizeof(parent), members.data(), members.size() * sizeof(SceNetInAddr));
++        return data;
++    }
++
++    void parse(const char *data, SceSize dataLen) {
++        assert(dataLen >= sizeof(header) + sizeof(parent));
++        assert(dataLen % 4 == 0);
++
++        const std::size_t entries = (dataLen / sizeof(SceNetInAddr)) - 2;
++        members.resize(entries);
++        header.parse(data, dataLen);
++        memcpy(&parent, data + sizeof(header), sizeof(SceNetInAddr));
++        memcpy(members.data(), data + sizeof(header) + sizeof(parent), entries * sizeof(SceNetInAddr));
++    }
++};
++
++struct HandlerNotification {
++    SceNetAdhocMatchingHandlerEventType type;
++    SceNetInAddr peer;
++    std::vector<char> opt;
++};
++
++class SceNetAdhocMatchingContext {
++public:
++    ~SceNetAdhocMatchingContext();
++
++    int initialize(SceNetAdhocMatchingMode mode, int maxnum, SceUShort16 port, int rxbuflen, unsigned int helloInterval, unsigned int keepaliveInterval, int retryCount, unsigned int rexmtInterval, Ptr<void> handlerAddr);
++    void finalize();
++
++    int start(EmuEnvState &emuenv, SceUID thread_id, int threadPriority, int threadStackSize, int threadCpuAffinityMask, SceSize helloOptLen, char *helloOpt);
++    int stop(EmuEnvState &emuenv, SceUID thread_id);
++
++    int initializeInputThread(EmuEnvState &emuenv, SceUID thread_id, int threadPriority, int threadStackSize, int threadCpuAffinityMask);
++    void closeInputThread(EmuEnvState &emuenv, SceUID thread_id);
++
++    int initializeEventHandler(EmuEnvState &emuenv, SceUID thread_id, int threadPriority, int threadStackSize, int threadCpuAffinityMask);
++    void closeEventHandler();
++
++    int initializeSendSocket(EmuEnvState &emuenv, SceUID thread_id);
++    void closeSendSocket(EmuEnvState &emuenv, SceUID thread_id);
++
++    SceNetAdhocMatchingContext *getNext();
++    void setNext(SceNetAdhocMatchingContext *next_context);
++
++    SceUID getId() const;
++    void setId(SceUID id);
++
++    bool isRunning() const;
++    SceUShort16 getPort() const;
++    SceNetAdhocMatchingContextStatus getStatus() const;
++    SceNetAdhocMatchingMode getMode() const;
++    SceNetAdhocMatchingCalloutSyncing &getCalloutSyncing();
++    SceNetAdhocMatchingTarget *findTargetByAddr(SceNetInAddr addr) const;
++    int getReadPipeUid() const;
++    int getWritePipeUid() const;
++
++    int getMembers(SceSize &outMembersCount, SceNetAdhocMatchingMember *outMembers) const;
++    int getHelloOpt(SceSize &outOptlen, void *outOpt) const;
++    int setHelloOpt(SceSize optlen, void *opt);
++    void deleteTarget(SceNetAdhocMatchingTarget *target);
++
++    void abortSendData(SceNetAdhocMatchingTarget &target);
++    int cancelTargetWithOpt(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target, SceSize optLen, char *opt);
++    int selectTarget(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target, SceSize optLen, char *opt);
++    int sendData(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target, SceSize dateLen, char *data);
++
++    void handleEventMessage(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget *target);
++    void handleEventRegistrationTimeout(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget *target);
++    void handleEventTargetTimeout(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget *target);
++    void handleEventHelloTimeout(EmuEnvState &emuenv, SceUID thread_id);
++    void handleEventDataTimeout(SceNetAdhocMatchingTarget *target);
++    void handleIncommingPackage(SceNetInAddr addr, SceSize rawPacketLen, SceSize packetLength);
++
++    void SendNotificationQueue(EmuEnvState &emuenv, SceUID thread_id);
++    int broadcastAbort(EmuEnvState &emuenv, SceUID thread_id);
++
++public:
++    SceNetAdhocMatchingPipeMessage helloPipeMsg{};
++    bool shouldHelloReqBeProcessed{};
++
++    int sendSocket{};
++    int recvSocket{};
++
++    int rxbuflen{};
++    char *rxbuf{ nullptr };
++
++    uint32_t ownAddress{};
++    uint16_t ownPort{};
++
++private:
++    // Packet data processing
++    void processPacketFromTarget(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target);
++    int processHelloPacket(SceNetAdhocMatchingTarget &target);
++    int processHelloAckPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target);
++    int processMemberListPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target);
++    int processMemberListAckPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target);
++    int processByePacket(SceNetAdhocMatchingTarget &target);
++    int processUnk9Packet(SceNetAdhocMatchingTarget &target);
++    int processDataPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target);
++    int processDataAckPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target);
++
++    // Target
++    void setTargetStatus(SceNetAdhocMatchingTarget &target, SceNetAdhocMatchingTargetStatus status);
++    SceNetAdhocMatchingTarget *newTarget(SceNetInAddr addr);
++    void getMemberList(SceNetAdhocMatchingTargetStatus status, SceNetInAddr *addrList, SceSize &addrListSize) const;
++    SceSize countTargetsWithStatusOrBetter(SceNetAdhocMatchingTargetStatus status) const;
++    bool isTargetAddressHigher(SceNetAdhocMatchingTarget &target) const;
++    void deleteAllTargets(EmuEnvState &emuenv, SceUID thread_id);
++
++    // Member list message
++    int createMembersList();
++    void deleteMemberList();
++
++    // Hello optional data
++    void deleteHelloMessage();
++
++    // Timed functions
++    void addHelloTimedFunct(uint64_t time_interval);
++    void addSendDataTimeout(SceNetAdhocMatchingTarget &target);
++    void addRegisterTargetTimeout(SceNetAdhocMatchingTarget &target);
++    void addTargetTimeout(SceNetAdhocMatchingTarget &target);
++    void deleteHelloTimedFunction();
++    void deleteSendDataTimeout(SceNetAdhocMatchingTarget &target);
++    void deleteAllTimedFunctions(SceNetAdhocMatchingTarget &target);
++
++    void notifyHandler(SceNetAdhocMatchingHandlerEventType type, SceNetInAddr peer, SceSize optLen = 0, const void *opt = nullptr);
++
++    uint32_t getBroadcastAddr();
++    uint32_t getTargetAddr(const SceNetAdhocMatchingTarget &target);
++
++    int sendMemberListToTarget(EmuEnvState &emuenv, SceUID thread_id, const SceNetAdhocMatchingTarget &target);
++    int sendDataMessageToTarget(EmuEnvState &emuenv, SceUID thread_id, const SceNetAdhocMatchingTarget &target, SceNetAdhocMatchingPacketType type, std::span<const char> data);
++    int sendOptDataToTarget(EmuEnvState &emuenv, SceUID thread_id, const SceNetAdhocMatchingTarget &target, SceNetAdhocMatchingPacketType type, std::span<const char> opt);
++
++    int broadcastHello(EmuEnvState &emuenv, SceUID thread_id);
++    int broadcastBye(EmuEnvState &emuenv, SceUID thread_id);
++
++    SceNetAdhocMatchingContext *next{ nullptr };
++    SceUID id{};
++    SceNetAdhocMatchingContextStatus status{ SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING };
++    SceNetAdhocMatchingMode mode{ SCE_NET_ADHOC_MATCHING_MODE_NONE };
++    int maxnum{};
++    SceUShort16 port{};
++
++    unsigned int helloInterval{};
++    unsigned int keepAliveInterval{};
++    unsigned int retryCount{};
++    unsigned int rexmtInterval{};
++
++    SceNetAdhocMatchingHandler handler{};
++    std::queue<HandlerNotification> notificationQueue{};
++
++    bool shouldExit{ true };
++    bool isEventThreadInitialized{};
++    bool isInputThreadInitialized{};
++    std::thread eventThread{};
++    std::thread inputThread{};
++    SceUID event_thread_id{};
++    SceUID input_thread_id{};
++
++    int msgPipeUid[2]{}; // 0 = read, 1 = write
++
++    SceNetAdhocMatchingHelloMessage *helloMsg{ nullptr };
++    SceNetAdhocMatchingMemberMessage *memberMsg{ nullptr };
++
++    int helloOptionFlag{};
++
++    SceNetAdhocMatchingTarget *targetList{ nullptr };
++
++    SceNetAdhocMatchingCalloutSyncing calloutSyncing{};
++    SceNetAdhocMatchingCalloutFunction helloTimedFunction{};
++};
+diff --git a/vita3k/adhoc/include/adhoc/matchingTarget.h b/vita3k/adhoc/include/adhoc/matchingTarget.h
+new file mode 100644
+index 0000000000..f16926b83a
+--- /dev/null
++++ b/vita3k/adhoc/include/adhoc/matchingTarget.h
+@@ -0,0 +1,100 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#pragma once
++
++#include <span>
++#include <vector>
++
++#include "adhoc/matchingContext.h"
++#include "adhoc/threads.h"
++#include "net/types.h"
++#include "util/types.h"
++
++enum SceNetAdhocMatchingTargetStatus : uint32_t {
++    SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED = 1,
++    SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2 = 2,
++    SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES = 3,
++    SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2 = 4,
++    SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED = 5,
++};
++
++enum SceNetAdhocMatchingSendDataStatus {
++    SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY = 1,
++    SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY = 2,
++};
++
++struct SceNetAdhocMatchingAckTimeout {
++    SceNetAdhocMatchingPipeMessage message;
++    bool isAckPending;
++    int retryCount;
++};
++
++class SceNetAdhocMatchingTarget {
++public:
++    void setStatus(SceNetAdhocMatchingTargetStatus status);
++    void setSendDataStatus(SceNetAdhocMatchingSendDataStatus status);
++
++    void setPipeUids(int read, int write);
++    int getReadPipeUid() const;
++    int getWritePipeUid() const;
++
++    int setOptMessage(SceSize length, const char *data);
++    std::span<const char> getOpt() const;
++    void deleteOptMessage();
++
++    int setRawPacket(SceSize rawLenght, SceSize length, const char *data);
++    SceSize getPacketLen() const;
++    std::span<const char> getRawPacket() const;
++    void deleteRawPacket();
++
++    int setSendData(SceSize length, const char *data);
++    std::span<const char> getSendData() const;
++    void deleteSendData();
++
++    SceNetAdhocMatchingTarget *next;
++    SceNetAdhocMatchingTargetStatus status;
++    SceNetInAddr addr;
++    int unk_0c;
++    SceSize keepAliveInterval;
++
++    SceNetAdhocMatchingPipeMessage incomingPacketMessage;
++    int retryCount;
++
++    int unk_50;
++    bool deleteTarget;
++    int targetCount;
++    SceUID uid;
++
++    SceSize sendDataCount;
++    SceSize recvDataCount;
++    SceNetAdhocMatchingSendDataStatus sendDataStatus;
++
++    SceNetAdhocMatchingAckTimeout targetTimeout;
++    SceNetAdhocMatchingAckTimeout sendDataTimeout;
++
++    SceNetAdhocMatchingCalloutFunction targetTimeoutFunction;
++    SceNetAdhocMatchingCalloutFunction sendDataTimeoutFunction;
++
++private:
++    int msgPipeUid[2]; // 0 = read, 1 = write
++
++    SceSize packetLength = 0;
++    std::vector<char> packet{};
++    std::vector<char> sendData{};
++    std::vector<char> opt{};
++};
+diff --git a/vita3k/adhoc/include/adhoc/state.h b/vita3k/adhoc/include/adhoc/state.h
+new file mode 100644
+index 0000000000..00013c7747
+--- /dev/null
++++ b/vita3k/adhoc/include/adhoc/state.h
+@@ -0,0 +1,145 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#pragma once
++
++#include <mutex>
++
++#include "mem/util.h"
++#include "module/module.h"
++#include "util/types.h"
++
++#define SCE_NET_ADHOC_DEFAULT_PORT 0xe4a
++#define SCE_NET_ADHOC_MATCHING_MAXNUM 16
++#define SCE_NET_ADHOC_MATCHING_MAXOPTLEN 9196
++#define SCE_NET_ADHOC_MATCHING_MAXDATALEN 9204
++#define SCE_NET_ADHOC_MATCHING_MAXHELLOOPTLEN 1426
++
++struct SceNetInAddr;
++DECL_EXPORT(SceInt32, sceNetCtlAdhocGetInAddr, SceNetInAddr *inaddr);
++
++enum SceNetAdhocMatchingErrorCode {
++    SCE_NET_ADHOC_MATCHING_OK = 0x0,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MODE = 0x80413101,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_PORT = 0x80413102,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MAXNUM = 0x80413103,
++    SCE_NET_ADHOC_MATCHING_ERROR_RXBUF_TOO_SHORT = 0x80413104,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN = 0x80413105,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG = 0x80413106,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID = 0x80413107,
++    SCE_NET_ADHOC_MATCHING_ERROR_ID_NOT_AVAIL = 0x80413108,
++    SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE = 0x80413109,
++    SCE_NET_ADHOC_MATCHING_ERROR_IS_RUNNING = 0x8041310a,
++    SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING = 0x8041310b,
++    SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET = 0x8041310c,
++    SCE_NET_ADHOC_MATCHING_ERROR_TARGET_NOT_READY = 0x8041310d,
++    SCE_NET_ADHOC_MATCHING_ERROR_EXCEED_MAXNUM = 0x8041310e,
++    SCE_NET_ADHOC_MATCHING_ERROR_REQUEST_IN_PROGRESS = 0x8041310f,
++    SCE_NET_ADHOC_MATCHING_ERROR_ALREADY_ESTABLISHED = 0x80413110,
++    SCE_NET_ADHOC_MATCHING_ERROR_BUSY = 0x80413111,
++    SCE_NET_ADHOC_MATCHING_ERROR_ALREADY_INITIALIZED = 0x80413112,
++    SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED = 0x80413113,
++    SCE_NET_ADHOC_MATCHING_ERROR_PORT_IN_USE = 0x80413114,
++    SCE_NET_ADHOC_MATCHING_ERROR_STACKSIZE_TOO_SHORT = 0x80413115,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_DATALEN = 0x80413116,
++    SCE_NET_ADHOC_MATCHING_ERROR_NOT_ESTABLISHED = 0x80413117,
++    SCE_NET_ADHOC_MATCHING_ERROR_DATA_BUSY = 0x80413118,
++    SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ALIGNMENT = 0x80413119
++};
++
++enum SceNetAdhocMatchingMode : uint8_t {
++    SCE_NET_ADHOC_MATCHING_MODE_NONE = 0,
++    SCE_NET_ADHOC_MATCHING_MODE_PARENT = 1,
++    SCE_NET_ADHOC_MATCHING_MODE_CHILD = 2,
++    SCE_NET_ADHOC_MATCHING_MODE_P2P = 3,
++    SCE_NET_ADHOC_MATCHING_MODE_MAX = 4,
++};
++
++enum SceNetAdhocMatchingHandlerEventType {
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_NONE = 0,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_HELLO = 1,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_REQUEST = 2,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_LEAVE = 3,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DENY = 4,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_CANCEL = 5,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ACCEPT = 6,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ESTABLISHED = 7,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_TIMEOUT = 8,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ERROR = 9,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_BYE = 10,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA = 11,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA_ACK = 12,
++    SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA_TIMEOUT = 13
++};
++
++enum SceNetAdhocMatchingEvent : uint32_t {
++    SCE_NET_ADHOC_MATCHING_EVENT_ABORT = 0,
++    SCE_NET_ADHOC_MATCHING_EVENT_PACKET = 1,
++    SCE_NET_ADHOC_MATCHING_EVENT_REGISTRATION_TIMEOUT = 2,
++    SCE_NET_ADHOC_MATCHING_EVENT_TARGET_TIMEOUT = 3,
++    SCE_NET_ADHOC_MATCHING_EVENT_HELLO_TIMEOUT = 4,
++    SCE_NET_ADHOC_MATCHING_EVENT_DATA_TIMEOUT = 5,
++    SCE_NET_ADHOC_MATCHING_EVENT_NOTIFICATION = 6,
++};
++
++struct SceNetAdhocHandlerArguments {
++    uint32_t id;
++    uint32_t event;
++    Address peer;
++    uint32_t optlen;
++    Address opt;
++};
++static_assert(sizeof(SceNetAdhocHandlerArguments) == 0x14, "SceNetAdhocHandlerArguments is an invalid size");
++
++class SceNetAdhocMatchingContext;
++class SceNetAdhocMatchingTarget;
++
++struct SceNetAdhocMatchingPipeMessage {
++    SceNetAdhocMatchingEvent type;
++    SceNetAdhocMatchingTarget *target;
++    bool isSheduled;
++};
++typedef Address SceNetAdhocMatchingHandler;
++
++class AdhocState {
++public:
++    ~AdhocState();
++
++    int initializeMutex();
++    int deleteMutex();
++    std::mutex &getMutex();
++
++    int createMSpace(SceSize poolsize, void *poolptr);
++    int deleteMSpace();
++
++    int initializeMatchingContextList();
++    int isAnyMatchingContextRunning();
++    SceNetAdhocMatchingContext *findMatchingContextById(SceUID id);
++    int createMatchingContext(SceUShort16 port);
++    void deleteMatchingContext(SceNetAdhocMatchingContext *ctx);
++    void deleteAllMatchingContext();
++
++public: // Globals
++    bool is_initialized = false;
++
++private:
++    bool is_mutex_initialized = false;
++
++    std::mutex mutex;
++    SceNetAdhocMatchingContext *contextList = NULL;
++    SceUID matchingCtxCount = 1;
++};
+diff --git a/vita3k/adhoc/include/adhoc/threads.h b/vita3k/adhoc/include/adhoc/threads.h
+new file mode 100644
+index 0000000000..77f31eb3f1
+--- /dev/null
++++ b/vita3k/adhoc/include/adhoc/threads.h
+@@ -0,0 +1,26 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#pragma once
++
++#include "util/types.h"
++
++struct EmuEnvState;
++
++int adhocMatchingEventThread(EmuEnvState &emuenv, SceUID thread_id, SceUID id);
++int adhocMatchingInputThread(EmuEnvState &emuenv, SceUID thread_id, SceUID id);
++int adhocMatchingCalloutThread(EmuEnvState &emuenv, SceUID id);
+diff --git a/vita3k/adhoc/src/callbacks.cpp b/vita3k/adhoc/src/callbacks.cpp
+new file mode 100644
+index 0000000000..90305c9443
+--- /dev/null
++++ b/vita3k/adhoc/src/callbacks.cpp
+@@ -0,0 +1,80 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#include "adhoc/callbacks.h"
++#include "adhoc/matchingContext.h"
++#include "adhoc/matchingTarget.h"
++#include "adhoc/state.h"
++#include "adhoc/threads.h"
++
++int helloTimeoutCallback(void *args) {
++    SceNetAdhocMatchingContext *ctx = (SceNetAdhocMatchingContext *)args;
++
++    if (!ctx->helloPipeMsg.isSheduled) {
++        ctx->helloPipeMsg.target = 0;
++        ctx->helloPipeMsg.isSheduled = true;
++        ctx->helloPipeMsg.type = SCE_NET_ADHOC_MATCHING_EVENT_HELLO_TIMEOUT;
++        write(ctx->getWritePipeUid(), &ctx->helloPipeMsg, sizeof(SceNetAdhocMatchingPipeMessage));
++    }
++    ctx->shouldHelloReqBeProcessed = false;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int registerTargetTimeoutCallback(void *args) {
++    SceNetAdhocMatchingTarget *target = (SceNetAdhocMatchingTarget *)args;
++
++    if (!target->targetTimeout.message.isSheduled) {
++        target->targetTimeout.message = {
++            .type = SCE_NET_ADHOC_MATCHING_EVENT_REGISTRATION_TIMEOUT,
++            .target = target,
++            .isSheduled = true,
++        };
++        write(target->getWritePipeUid(), &target->targetTimeout.message, sizeof(SceNetAdhocMatchingPipeMessage));
++    }
++    target->targetTimeout.isAckPending = false;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int targetTimeoutCallback(void *args) {
++    SceNetAdhocMatchingTarget *target = (SceNetAdhocMatchingTarget *)args;
++
++    if (!target->targetTimeout.message.isSheduled) {
++        target->targetTimeout.message = {
++            .type = SCE_NET_ADHOC_MATCHING_EVENT_TARGET_TIMEOUT,
++            .target = target,
++            .isSheduled = true,
++        };
++        write(target->getWritePipeUid(), &target->targetTimeout.message, sizeof(SceNetAdhocMatchingPipeMessage));
++    }
++    target->targetTimeout.isAckPending = false;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int sendDataTimeoutCallback(void *args) {
++    SceNetAdhocMatchingTarget *target = (SceNetAdhocMatchingTarget *)args;
++
++    if (!target->sendDataTimeout.message.isSheduled) {
++        target->sendDataTimeout.message = {
++            .type = SCE_NET_ADHOC_MATCHING_EVENT_DATA_TIMEOUT,
++            .target = target,
++            .isSheduled = true,
++        };
++        write(target->getWritePipeUid(), &target->sendDataTimeout.message, sizeof(SceNetAdhocMatchingPipeMessage));
++    }
++    target->sendDataTimeout.isAckPending = false;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
+diff --git a/vita3k/adhoc/src/calloutSyncing.cpp b/vita3k/adhoc/src/calloutSyncing.cpp
+new file mode 100644
+index 0000000000..2fe4264261
+--- /dev/null
++++ b/vita3k/adhoc/src/calloutSyncing.cpp
+@@ -0,0 +1,154 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#include <chrono>
++
++#include "adhoc/calloutSyncing.h"
++#include "adhoc/state.h"
++#include "adhoc/threads.h"
++
++int SceNetAdhocMatchingCalloutSyncing::initializeCalloutThread(EmuEnvState &emuenv, SceUID thread_id, int id, int threadPriority, int threadStackSize, int threadCpuAffinityMask) {
++    if (this->isInitialized)
++        return SCE_NET_CALLOUT_ERROR_NOT_TERMINATED;
++
++    this->shouldExit = false;
++    this->calloutThread = std::thread(adhocMatchingCalloutThread, std::ref(emuenv), id);
++    this->isInitialized = true;
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingCalloutSyncing::closeCalloutThread() {
++    if (!this->isInitialized)
++        return;
++
++    this->shouldExit = true;
++    this->condvar.notify_all();
++
++    if (this->calloutThread.joinable())
++        this->calloutThread.join();
++
++    this->isInitialized = false;
++}
++
++int SceNetAdhocMatchingCalloutSyncing::addTimedFunction(SceNetAdhocMatchingCalloutFunction *calloutFunction, SceLong64 interval, int (*function)(void *), void *args) {
++    if (!this->isInitialized)
++        return SCE_NET_CALLOUT_ERROR_NOT_INITIALIZED;
++
++    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
++    calloutFunction->function = function;
++    calloutFunction->args = args;
++    calloutFunction->execAt = now + interval;
++
++    std::lock_guard<std::mutex> guard(this->mutex);
++    SceNetAdhocMatchingCalloutFunction *previous_entry = nullptr;
++    SceNetAdhocMatchingCalloutFunction *entry = this->functionList;
++
++    // Search for duplicates
++    for (; entry != nullptr; entry = entry->next) {
++        if (calloutFunction == entry) {
++            return SCE_NET_CALLOUT_ERROR_DUPLICATED;
++        }
++    }
++
++    // Order in ascending order
++    for (entry = this->functionList; entry != nullptr; entry = entry->next) {
++        if (calloutFunction->execAt > entry->execAt) {
++            break;
++        }
++        previous_entry = entry;
++    }
++
++    // Add calloutFunction to list
++    calloutFunction->next = entry;
++    if (previous_entry != nullptr) {
++        previous_entry->next = calloutFunction;
++    } else {
++        this->functionList = calloutFunction;
++    }
++
++    this->condvar.notify_one();
++    return SCE_NET_CALLOUT_OK;
++}
++
++int SceNetAdhocMatchingCalloutSyncing::deleteTimedFunction(SceNetAdhocMatchingCalloutFunction *calloutFunction, bool *is_deleted) {
++    if (!this->isInitialized)
++        return SCE_NET_CALLOUT_ERROR_NOT_INITIALIZED;
++
++    std::lock_guard<std::mutex> guard(this->mutex);
++    SceNetAdhocMatchingCalloutFunction *entry = this->functionList;
++    SceNetAdhocMatchingCalloutFunction *previous_entry = nullptr;
++
++    for (; entry != nullptr; entry = entry->next) {
++        if (calloutFunction == entry) {
++            break;
++        }
++        previous_entry = entry;
++    }
++
++    if (entry == nullptr) {
++        if (is_deleted != nullptr) {
++            *is_deleted = false;
++        }
++        return SCE_NET_CALLOUT_OK;
++    }
++
++    if (previous_entry != nullptr) {
++        previous_entry->next = entry->next;
++    } else {
++        this->functionList = entry->next;
++    }
++
++    if (is_deleted != nullptr) {
++        *is_deleted = true;
++    }
++
++    return SCE_NET_CALLOUT_OK;
++}
++
++int SceNetAdhocMatchingCalloutSyncing::excecuteTimedFunctions() {
++    mutex.lock();
++
++    auto *entry = functionList;
++    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
++
++    while (entry != nullptr && entry->execAt < now) {
++        mutex.unlock();
++        entry->function(entry->args);
++        mutex.lock();
++
++        functionList = entry->next;
++        entry = functionList;
++    }
++
++    if (shouldExit) {
++        mutex.unlock();
++        return 0;
++    }
++
++    uint64_t sleep_time = 0;
++    if (entry != nullptr) {
++        sleep_time = entry->execAt - now;
++    }
++
++    mutex.unlock();
++    return sleep_time;
++}
++
++bool SceNetAdhocMatchingCalloutSyncing::isRunning() const {
++    return !shouldExit;
++}
+diff --git a/vita3k/adhoc/src/matchingContext.cpp b/vita3k/adhoc/src/matchingContext.cpp
+new file mode 100644
+index 0000000000..5b47199768
+--- /dev/null
++++ b/vita3k/adhoc/src/matchingContext.cpp
+@@ -0,0 +1,1447 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#include <cstring>
++#include <thread>
++
++#include "adhoc/callbacks.h"
++#include "adhoc/matchingContext.h"
++#include "adhoc/matchingTarget.h"
++#include "adhoc/state.h"
++#include "emuenv/state.h"
++#include "kernel/state.h"
++#include "net/types.h"
++#include "util/lock_and_find.h"
++#include "util/types.h"
++
++#include "../SceNet/SceNet.h"
++
++SceNetAdhocMatchingContext::~SceNetAdhocMatchingContext() {
++    finalize();
++}
++
++int SceNetAdhocMatchingContext::initialize(SceNetAdhocMatchingMode mode, int maxnum, SceUShort16 port, int rxbuflen, unsigned int helloInterval, unsigned int keepaliveInterval, int retryCount, unsigned int rexmtInterval, Ptr<void> handlerAddr) {
++    this->mode = mode;
++    shouldExit = true;
++
++    // Children have 2 peers max (parent and itself)
++    this->maxnum = 2;
++    if (this->mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT)
++        this->maxnum = maxnum;
++
++    this->port = port;
++    this->rxbuflen = rxbuflen;
++    this->rxbuf = new char[this->rxbuflen]; // Reserve space in adhoc
++
++    if (this->rxbuf == nullptr) {
++        return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++    }
++
++    this->helloInterval = helloInterval;
++    this->keepAliveInterval = keepaliveInterval;
++    this->retryCount = retryCount;
++    this->rexmtInterval = rexmtInterval;
++
++    this->shouldHelloReqBeProcessed = false;
++    this->helloOptionFlag = 1;
++    this->targetList = nullptr;
++
++    this->handler = handlerAddr.address();
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingContext::finalize() {
++    shouldExit = true;
++    auto *target = this->targetList;
++    while (target != nullptr) {
++        deleteAllTimedFunctions(*target);
++        target->deleteOptMessage();
++        target->deleteSendData();
++        target->deleteRawPacket();
++        auto *nextTarget = target->next;
++        delete target;
++        target = nextTarget;
++    }
++    this->targetList = nullptr;
++    this->calloutSyncing.closeCalloutThread();
++    closeEventHandler();
++    if (isInputThreadInitialized && this->inputThread.joinable())
++        this->inputThread.join();
++
++    if (rxbuf != nullptr) {
++        delete rxbuf;
++    }
++    if (helloMsg != nullptr) {
++        delete helloMsg;
++    }
++    if (memberMsg != nullptr) {
++        delete memberMsg;
++    }
++}
++
++int SceNetAdhocMatchingContext::start(EmuEnvState &emuenv, SceUID thread_id, int threadPriority, int threadStackSize, int threadCpuAffinityMask, SceSize helloOptlen, char *helloOpt) {
++    shouldExit = false;
++    int result = initializeSendSocket(emuenv, thread_id);
++    if (result != SCE_NET_ADHOC_MATCHING_OK)
++        return result;
++
++    result = initializeEventHandler(emuenv, thread_id, threadPriority, threadStackSize, threadCpuAffinityMask);
++    if (result != SCE_NET_ADHOC_MATCHING_OK) {
++        closeSendSocket(emuenv, thread_id);
++        return result;
++    }
++
++    result = initializeInputThread(emuenv, thread_id, threadPriority, 0x1000, threadCpuAffinityMask);
++    if (result != SCE_NET_ADHOC_MATCHING_OK) {
++        closeEventHandler();
++        closeSendSocket(emuenv, thread_id);
++        return result;
++    }
++
++    result = getCalloutSyncing().initializeCalloutThread(emuenv, thread_id, getId(), threadPriority, 0x1000, threadCpuAffinityMask);
++    if (result != SCE_NET_ADHOC_MATCHING_OK) {
++        closeEventHandler();
++        closeInputThread(emuenv, thread_id);
++        closeSendSocket(emuenv, thread_id);
++        return result;
++    }
++
++    if (getMode() == SCE_NET_ADHOC_MATCHING_MODE_PARENT || getMode() == SCE_NET_ADHOC_MATCHING_MODE_P2P) {
++        result = setHelloOpt(helloOptlen, helloOpt);
++        if (result != SCE_NET_ADHOC_MATCHING_OK) {
++            getCalloutSyncing().closeCalloutThread();
++            closeEventHandler();
++            closeInputThread(emuenv, thread_id);
++            closeSendSocket(emuenv, thread_id);
++            return result;
++        }
++
++        addHelloTimedFunct(helloInterval);
++    }
++
++    createMembersList();
++
++    status = SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::stop(EmuEnvState &emuenv, SceUID thread_id) {
++    status = SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_STOPPING;
++
++    // These 3 may take time because they wait for both threads to end
++    calloutSyncing.closeCalloutThread();
++    closeEventHandler();
++    closeInputThread(emuenv, thread_id);
++
++    emuenv.kernel.get_thread(input_thread_id)->exit_delete();
++    emuenv.kernel.get_thread(event_thread_id)->exit_delete();
++
++    if (mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT || mode == SCE_NET_ADHOC_MATCHING_MODE_P2P) {
++        deleteHelloTimedFunction();
++        deleteHelloMessage();
++    }
++
++    deleteAllTargets(emuenv, thread_id);
++    deleteMemberList();
++    closeSendSocket(emuenv, thread_id);
++
++    status = SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::initializeInputThread(EmuEnvState &emuenv, SceUID thread_id, int threadPriority, int threadStackSize, int threadCpuAffinityMask) {
++    int socket_uid = CALL_EXPORT(sceNetSocket, "SceNetAdhocMatchingRecv", AF_INET, SCE_NET_SOCK_DGRAM_P2P, SCE_NET_IPPROTO_IP);
++    if (socket_uid < SCE_NET_ADHOC_MATCHING_OK)
++        return socket_uid;
++
++    this->recvSocket = socket_uid;
++
++    const int flag = 1;
++    int result = CALL_EXPORT(sceNetSetsockopt, this->recvSocket, SCE_NET_SOL_SOCKET, SCE_NET_SO_REUSEADDR, (const char *)&flag, sizeof(flag));
++    if (result < SCE_NET_ADHOC_MATCHING_OK) {
++        CALL_EXPORT(sceNetSocketClose, this->recvSocket);
++        return result;
++    }
++
++    SceNetSockaddrIn recv_addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = htonl(INADDR_ANY),
++        .sin_vport = htons(port),
++    };
++
++    auto bindResult = CALL_EXPORT(sceNetBind, this->recvSocket, (SceNetSockaddr *)&recv_addr, sizeof(SceNetSockaddrIn));
++
++    if (bindResult < 0) {
++        CALL_EXPORT(sceNetSocketClose, this->recvSocket);
++        return bindResult;
++    }
++
++    const ThreadStatePtr input_thread = emuenv.kernel.create_thread(emuenv.mem, "SceAdhocMatchingInputThread", Ptr<void>(0), SCE_KERNEL_HIGHEST_PRIORITY_USER, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT, SCE_KERNEL_STACK_SIZE_USER_DEFAULT, nullptr);
++    this->input_thread_id = input_thread->id;
++
++    this->inputThread = std::thread(adhocMatchingInputThread, std::ref(emuenv), this->input_thread_id, this->id);
++    isInputThreadInitialized = true;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingContext::closeInputThread(EmuEnvState &emuenv, SceUID thread_id) {
++    if (!isInputThreadInitialized)
++        return;
++
++    shouldExit = true;
++    CALL_EXPORT(sceNetSocketAbort, this->recvSocket);
++
++    if (this->inputThread.joinable())
++        this->inputThread.join();
++
++    CALL_EXPORT(sceNetShutdown, this->recvSocket, 0);
++    CALL_EXPORT(sceNetSocketClose, this->recvSocket);
++    this->recvSocket = 0;
++    isInputThreadInitialized = false;
++}
++
++int SceNetAdhocMatchingContext::initializeSendSocket(EmuEnvState &emuenv, SceUID thread_id) {
++    SceNetInAddr ownAddr;
++    CALL_EXPORT(sceNetCtlAdhocGetInAddr, &ownAddr);
++    this->ownAddress = ownAddr.s_addr;
++
++    int socket_uid = CALL_EXPORT(sceNetSocket, "SceNetAdhocMatchingSend", AF_INET, SCE_NET_SOCK_DGRAM_P2P, SCE_NET_IPPROTO_IP);
++    if (socket_uid < SCE_NET_ADHOC_MATCHING_OK)
++        return socket_uid;
++
++    this->sendSocket = socket_uid;
++
++    int result = SCE_NET_ADHOC_MATCHING_OK;
++    int portOffset = this->mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT ? 1 : 2;
++    do {
++        SceNetSockaddrIn addr = {
++            .sin_len = sizeof(SceNetSockaddrIn),
++            .sin_family = AF_INET,
++            .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++            .sin_vport = htons(this->port + portOffset),
++        };
++        this->ownPort = htons(SCE_NET_ADHOC_DEFAULT_PORT) + htons(this->port + portOffset);
++        int result = CALL_EXPORT(sceNetBind, this->sendSocket, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++        portOffset++;
++    } while (result == SCE_NET_ERROR_EADDRINUSE && portOffset < 20);
++
++    if (result < SCE_NET_ADHOC_MATCHING_OK) {
++        CALL_EXPORT(sceNetShutdown, this->sendSocket, 0);
++        CALL_EXPORT(sceNetSocketClose, this->sendSocket);
++        return result;
++    }
++
++    const int flag = 1;
++    result = CALL_EXPORT(sceNetSetsockopt, this->sendSocket, SCE_NET_SOL_SOCKET, SCE_NET_SO_BROADCAST, (const char *)&flag, sizeof(flag));
++    if (result < SCE_NET_ADHOC_MATCHING_OK) {
++        CALL_EXPORT(sceNetShutdown, this->sendSocket, 0);
++        CALL_EXPORT(sceNetSocketClose, this->sendSocket);
++        return result;
++    }
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::initializeEventHandler(EmuEnvState &emuenv, SceUID thread_id, int threadPriority, int threadStackSize, int threadCpuAffinityMask) {
++#ifdef _WIN32
++    auto pipeResult = _pipe(this->msgPipeUid, 0x1000, 0);
++#else
++    auto pipeResult = pipe(this->msgPipeUid);
++#endif
++    if (pipeResult < SCE_NET_ADHOC_MATCHING_OK) {
++        return pipeResult;
++    }
++    const ThreadStatePtr event_thread = emuenv.kernel.create_thread(emuenv.mem, "SceAdhocMatchingEventThread", Ptr<void>(0), SCE_KERNEL_HIGHEST_PRIORITY_USER, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT, SCE_KERNEL_STACK_SIZE_USER_DEFAULT, nullptr);
++    this->event_thread_id = event_thread->id;
++
++    this->eventThread = std::thread(adhocMatchingEventThread, std::ref(emuenv), this->event_thread_id, this->id);
++    isEventThreadInitialized = true;
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingContext::closeEventHandler() {
++    if (!isEventThreadInitialized)
++        return;
++
++    SceNetAdhocMatchingPipeMessage abortMsg{
++        .type = SCE_NET_ADHOC_MATCHING_EVENT_ABORT,
++    };
++    write(getWritePipeUid(), &abortMsg, sizeof(SceNetAdhocMatchingPipeMessage));
++
++    if (this->eventThread.joinable())
++        this->eventThread.join();
++
++    close(getWritePipeUid());
++    close(getReadPipeUid());
++    isEventThreadInitialized = false;
++}
++
++void SceNetAdhocMatchingContext::closeSendSocket(EmuEnvState &emuenv, SceUID thread_id) {
++    CALL_EXPORT(sceNetSocketAbort, this->sendSocket);
++    CALL_EXPORT(sceNetShutdown, this->sendSocket, 0);
++    CALL_EXPORT(sceNetSocketClose, this->sendSocket);
++}
++
++SceNetAdhocMatchingContext *SceNetAdhocMatchingContext::getNext() {
++    return this->next;
++}
++
++void SceNetAdhocMatchingContext::setNext(SceNetAdhocMatchingContext *next_context) {
++    this->next = next_context;
++}
++
++SceUID SceNetAdhocMatchingContext::getId() const {
++    return this->id;
++}
++
++void SceNetAdhocMatchingContext::setId(SceUID id) {
++    this->id = id;
++}
++
++bool SceNetAdhocMatchingContext::isRunning() const {
++    return !this->shouldExit;
++}
++
++SceUShort16 SceNetAdhocMatchingContext::getPort() const {
++    return this->port;
++}
++
++SceNetAdhocMatchingContextStatus SceNetAdhocMatchingContext::getStatus() const {
++    return this->status;
++}
++
++SceNetAdhocMatchingMode SceNetAdhocMatchingContext::getMode() const {
++    return this->mode;
++}
++
++SceNetAdhocMatchingCalloutSyncing &SceNetAdhocMatchingContext::getCalloutSyncing() {
++    return this->calloutSyncing;
++}
++
++int SceNetAdhocMatchingContext::getReadPipeUid() const {
++    return this->msgPipeUid[0];
++}
++
++int SceNetAdhocMatchingContext::getWritePipeUid() const {
++    return this->msgPipeUid[1];
++}
++
++void SceNetAdhocMatchingContext::processPacketFromTarget(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target) {
++    SceNetAdhocMatchingMessageHeader packet{};
++    const auto rawPacket = target.getRawPacket();
++    packet.parse(rawPacket.data(), rawPacket.size());
++
++    switch (this->mode) {
++    case SCE_NET_ADHOC_MATCHING_MODE_PARENT:
++        if (packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO)
++            return;
++        if (packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST)
++            return;
++        break;
++    case SCE_NET_ADHOC_MATCHING_MODE_CHILD:
++        if (packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK)
++            return;
++        if (packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST_ACK)
++            return;
++        break;
++    case SCE_NET_ADHOC_MATCHING_MODE_P2P:
++        if (packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST && isTargetAddressHigher(target))
++            return;
++        if (packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST_ACK)
++            return;
++        break;
++    }
++
++    int count = 0;
++    if ((packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK || packet.type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3) && rawPacket.size() - target.getPacketLen() > 15) {
++        memcpy(&count, rawPacket.data() + target.getPacketLen(), sizeof(count));
++        count = ntohl(count);
++        if (count != target.uid) {
++            switch (target.status) {
++            case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED:
++                break;
++            case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2:
++            case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES:
++                setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++                deleteAllTimedFunctions(target);
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_CANCEL, target.addr);
++                break;
++            case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED:
++                setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++                deleteAllTimedFunctions(target);
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_LEAVE, target.addr);
++                break;
++            }
++        }
++    }
++
++    switch (packet.type) {
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO:
++        processHelloPacket(target);
++        break;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK:
++        processHelloAckPacket(emuenv, thread_id, target);
++        break;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3:
++        switch (target.status) {
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED:
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, target.getOpt());
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++            deleteAllTimedFunctions(target);
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ERROR, target.addr);
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED);
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK4, {});
++            addTargetTimeout(target);
++            target.targetTimeout.retryCount = retryCount;
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ESTABLISHED, target.addr);
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED);
++            target.uid = count;
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK4, {});
++            addTargetTimeout(target);
++            target.targetTimeout.retryCount = retryCount;
++            if (target.getPacketLen() - 4 < 1) {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ACCEPT, target.addr);
++            } else {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ACCEPT, target.addr, target.getPacketLen() - 4, rawPacket.data() + 4);
++            }
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ESTABLISHED, target.addr);
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED:
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK4, {});
++            break;
++        }
++        break;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK4:
++        switch (target.status) {
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED:
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, target.getOpt());
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2:
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++            deleteAllTimedFunctions(target);
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ERROR, target.addr);
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED);
++            addTargetTimeout(target);
++            target.targetTimeout.retryCount = retryCount;
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ESTABLISHED, target.addr);
++            break;
++        }
++        break;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL:
++        switch (target.status) {
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED:
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2:
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++            deleteAllTimedFunctions(target);
++            if (target.getPacketLen() - 4 < 1) {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_CANCEL, target.addr);
++            } else {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_CANCEL, target.addr, target.getPacketLen() - 4, rawPacket.data() + 4);
++            }
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++            deleteAllTimedFunctions(target);
++            if (target.getPacketLen() - 4 < 1) {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DENY, target.addr);
++            } else {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DENY, target.addr, target.getPacketLen() - 4, rawPacket.data() + 4);
++            }
++            break;
++        case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED:
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++            deleteAllTimedFunctions(target);
++            if (target.getPacketLen() - 4 < 1) {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_LEAVE, target.addr);
++            } else {
++                notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_LEAVE, target.addr, target.getPacketLen() - 4, rawPacket.data() + 4);
++            }
++            break;
++        }
++        break;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST:
++        processMemberListPacket(emuenv, thread_id, target);
++        return;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST_ACK:
++        processMemberListAckPacket(emuenv, thread_id, target);
++        return;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_BYE:
++        processByePacket(target);
++        return;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK9:
++        processUnk9Packet(target);
++        return;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA:
++        processDataPacket(emuenv, thread_id, target);
++        return;
++    case SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA_ACK:
++        processDataAckPacket(emuenv, thread_id, target);
++        return;
++    }
++}
++
++int SceNetAdhocMatchingContext::processHelloPacket(SceNetAdhocMatchingTarget &target) {
++    const SceSize targetCount = this->countTargetsWithStatusOrBetter(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES);
++
++
++    SceNetAdhocMatchingHelloMessage helloPacket;
++    const auto rawPacket = target.getRawPacket();
++    helloPacket.parse(rawPacket.data(), rawPacket.size());
++
++    if (helloPacket.header.packetLength <= 7)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED) {
++        target.unk_0c = helloPacket.helloInterval;
++        target.keepAliveInterval = helloPacket.rexmtInterval;
++
++        if (rawPacket.size() - target.getPacketLen() > 0xf) {
++            target.unk_50 = helloPacket.unk_6c;
++        }
++    }
++
++    if (targetCount + 1 >= maxnum)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_HELLO, target.addr, helloPacket.optBuffer.size(), helloPacket.optBuffer.data());
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processHelloAckPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target) {
++    auto targetCount = this->countTargetsWithStatusOrBetter(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES);
++
++    SceNetAdhocMatchingOptMessage helloAckPacket;
++    const auto rawPacket = target.getRawPacket();
++    helloAckPacket.parse(rawPacket.data(), rawPacket.size());
++
++    switch (target.status) {
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED: {
++        if (targetCount + 1 < this->maxnum) {
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2);
++            target.uid = helloAckPacket.targetCount;
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK9, {});
++            int data_size = target.getPacketLen() - 4;
++            if (data_size < 1) {
++                this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_REQUEST, target.addr);
++            } else {
++                this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_REQUEST, target.addr, data_size, rawPacket.data() + 0x4);
++            }
++        } else {
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++        }
++        break;
++    }
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2:
++        if (targetCount + 1 < this->maxnum) {
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK9, {});
++        } else {
++            setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++            deleteAllTimedFunctions(target);
++            sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++            this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_CANCEL, target.addr);
++        }
++        break;
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES:
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3, target.getOpt());
++        addRegisterTargetTimeout(target);
++        break;
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2: {
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES);
++        target.uid = helloAckPacket.targetCount;
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3, target.getOpt());
++        addRegisterTargetTimeout(target);
++        int data_size = target.getPacketLen() - 4;
++        if (data_size < 1) {
++            this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ACCEPT, target.addr);
++        } else {
++            this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ACCEPT, target.addr, data_size, rawPacket.data() + 0x4);
++        }
++        break;
++    }
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED:
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++        deleteAllTimedFunctions(target);
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++        this->notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ERROR, target.addr);
++    }
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processMemberListPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target) {
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED) {
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, target.getOpt());
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2 || target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2) {
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++        deleteAllTimedFunctions(target);
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++        notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ERROR, target.addr);
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    SceNetAdhocMatchingMemberMessage *message = new SceNetAdhocMatchingMemberMessage();
++    if (message == nullptr)
++        return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++
++    const auto rawPacket = target.getRawPacket();
++    message->parse(rawPacket.data(), rawPacket.size());
++
++    if (mode == SCE_NET_ADHOC_MATCHING_MODE_CHILD) {
++        deleteMemberList();
++        memberMsg = message;
++    }
++
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES) {
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED);
++        addTargetTimeout(target);
++        notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ESTABLISHED, target.addr);
++    }
++
++    sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST_ACK, {});
++    target.targetTimeout.retryCount = retryCount;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processMemberListAckPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target) {
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED) {
++        target.targetTimeout.retryCount = retryCount;
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    if (target.status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED) {
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++        deleteAllTimedFunctions(target);
++        notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_ERROR, target.addr);
++    }
++
++    sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, target.getOpt());
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processByePacket(SceNetAdhocMatchingTarget &target) {
++    if (target.status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED) {
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++        deleteAllTimedFunctions(target);
++    }
++
++    notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_BYE, target.addr);
++    target.deleteTarget = true;
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processUnk9Packet(SceNetAdhocMatchingTarget &target) {
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2)
++        target.retryCount = retryCount;
++    if (target.status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    SceNetAdhocMatchingDataMessage dataPacket;
++    const auto rawPacket = target.getRawPacket();
++    dataPacket.parse(rawPacket.data(), rawPacket.size());
++
++    if (dataPacket.targetId != target.uid)
++        return SCE_NET_ADHOC_MATCHING_OK;
++    if (target.sendDataStatus != SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY)
++        return SCE_NET_ADHOC_MATCHING_OK;
++    if (dataPacket.packetId != target.sendDataCount)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    target.setSendDataStatus(SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY);
++    notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA_ACK, target.addr);
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processDataPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target) {
++    if (target.status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    SceNetAdhocMatchingDataMessage dataPacket;
++    const auto rawPacket = target.getRawPacket();
++    dataPacket.parse(rawPacket.data(), rawPacket.size());
++
++    if (dataPacket.targetId != target.uid)
++        return SCE_NET_ADHOC_MATCHING_OK;
++    if (target.recvDataCount <= dataPacket.packetId) {
++        target.recvDataCount = dataPacket.packetId + 1;
++        if (target.getPacketLen() - 0xc < 1) {
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA, target.addr);
++        } else {
++            notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA, target.addr, dataPacket.header.packetLength - 0x8, dataPacket.dataBuffer.data());
++        }
++    }
++    sendDataMessageToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA_ACK, {});
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::processDataAckPacket(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target) {
++    if (target.status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    SceNetAdhocMatchingDataMessage dataPacket;
++    const auto rawPacket = target.getRawPacket();
++    dataPacket.parse(rawPacket.data(), rawPacket.size());
++
++    if (dataPacket.targetId != target.uid)
++        return SCE_NET_ADHOC_MATCHING_OK;
++    if (target.sendDataStatus != SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY)
++        return SCE_NET_ADHOC_MATCHING_OK;
++    if (dataPacket.packetId != target.sendDataCount)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    target.setSendDataStatus(SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY);
++    notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA_ACK, target.addr);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingContext::abortSendData(SceNetAdhocMatchingTarget &target) {
++    deleteSendDataTimeout(target);
++    target.setSendDataStatus(SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY);
++}
++
++int SceNetAdhocMatchingContext::cancelTargetWithOpt(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target, SceSize optLen, char *opt) {
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED) {
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    deleteAllTimedFunctions(target);
++    std::span<const char> optMsg(opt, optLen);
++    sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, optMsg);
++    setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++
++    if (target.setOptMessage(optLen, opt) < SCE_NET_ADHOC_MATCHING_OK)
++        return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::selectTarget(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target, SceSize optLen, char *opt) {
++    auto membersCount = countTargetsWithStatusOrBetter(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES);
++    switch (target.status) {
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED:
++        if (mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT)
++            return SCE_NET_ADHOC_MATCHING_ERROR_TARGET_NOT_READY;
++        if (membersCount + 1 >= maxnum)
++            return SCE_NET_ADHOC_MATCHING_ERROR_EXCEED_MAXNUM;
++        if (target.setOptMessage(optLen, opt) < SCE_NET_ADHOC_MATCHING_OK)
++            return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++        target.targetCount++;
++        if (target.targetCount == 0)
++            target.targetCount = 1;
++
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK, target.getOpt());
++        addRegisterTargetTimeout(target);
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2);
++        target.retryCount = retryCount;
++        break;
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_2:
++        if (membersCount + 1 >= maxnum)
++            return SCE_NET_ADHOC_MATCHING_ERROR_EXCEED_MAXNUM;
++        if (target.setOptMessage(optLen, opt) < SCE_NET_ADHOC_MATCHING_OK)
++            return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++        target.targetCount++;
++        if (target.targetCount == 0)
++            target.targetCount = 1;
++
++        sendOptDataToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3, target.getOpt());
++        addRegisterTargetTimeout(target);
++        setTargetStatus(target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2);
++        target.retryCount = retryCount;
++        break;
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES:
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2:
++        return SCE_NET_ADHOC_MATCHING_ERROR_REQUEST_IN_PROGRESS;
++    case SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED:
++        return SCE_NET_ADHOC_MATCHING_ERROR_ALREADY_ESTABLISHED;
++    }
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::sendData(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget &target, SceSize dataLen, char *data) {
++    target.setSendData(dataLen, data);
++    target.sendDataCount++;
++    sendDataMessageToTarget(emuenv, thread_id, target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA, target.getSendData());
++    addSendDataTimeout(target);
++    target.setSendDataStatus(SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY);
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingContext::handleEventMessage(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget *target) {
++    target->incomingPacketMessage.isSheduled = false;
++    if (target == nullptr)
++        return;
++
++    processPacketFromTarget(emuenv, thread_id, *target);
++    target->deleteRawPacket();
++}
++
++void SceNetAdhocMatchingContext::handleEventRegistrationTimeout(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget *target) {
++    target->targetTimeout.message.isSheduled = false;
++    if (target == nullptr)
++        return;
++
++    if (target->status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2) {
++        if (target->unk_50 || target->retryCount-- > 0) {
++            sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK, target->getOpt());
++            addRegisterTargetTimeout(*target);
++            return;
++        }
++        setTargetStatus(*target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++        sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL,{});
++        notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_TIMEOUT, target->addr);
++    }
++
++    if (target->status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES) {
++        if (target->retryCount-- > 0) {
++            sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3, target->getOpt());
++            addRegisterTargetTimeout(*target);
++            return;
++        }
++        setTargetStatus(*target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++        sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++        notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_TIMEOUT, target->addr);
++    }
++}
++
++void SceNetAdhocMatchingContext::handleEventTargetTimeout(EmuEnvState &emuenv, SceUID thread_id, SceNetAdhocMatchingTarget *target) {
++    target->targetTimeout.message.isSheduled = false;
++    if (target == nullptr)
++        return;
++
++    if (target->status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED) {
++        return;
++    }
++
++    if (mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT || (mode == SCE_NET_ADHOC_MATCHING_MODE_P2P && isTargetAddressHigher(*target))) {
++        sendMemberListToTarget(emuenv, thread_id, *target);
++    }
++
++    if (target->targetTimeout.retryCount-- > 0) {
++        addTargetTimeout(*target);
++        return;
++    }
++
++    setTargetStatus(*target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++    sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
++    notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_TIMEOUT, target->addr);
++}
++
++void SceNetAdhocMatchingContext::handleEventHelloTimeout(EmuEnvState &emuenv, SceUID thread_id) {
++    helloPipeMsg.isSheduled = false;
++
++    const int num = countTargetsWithStatusOrBetter(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES);
++    if (num + 1 < maxnum)
++        broadcastHello(emuenv, thread_id);
++
++    addHelloTimedFunct(helloInterval);
++}
++
++void SceNetAdhocMatchingContext::handleEventDataTimeout(SceNetAdhocMatchingTarget *target) {
++    target->sendDataTimeout.message.isSheduled = false;
++    if (target == nullptr)
++        return;
++
++    if (target->sendDataStatus != SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY)
++        return;
++
++    if (target->sendDataTimeout.retryCount-- > 0)
++        return;
++
++    target->setSendDataStatus(SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY);
++    notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_DATA_TIMEOUT, target->addr);
++}
++
++void SceNetAdhocMatchingContext::handleIncommingPackage(SceNetInAddr addr, SceSize rawPacketLength, SceSize packetLength) {
++    auto target = findTargetByAddr(addr);
++
++    // No target found try to create one
++    if (target == nullptr) {
++        SceNetAdhocMatchingPacketType type = *(SceNetAdhocMatchingPacketType *)(rxbuf + 1);
++        if (type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK && (mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT || mode == SCE_NET_ADHOC_MATCHING_MODE_P2P)) {
++            target = newTarget(addr);
++        }
++        if (type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO && (mode == SCE_NET_ADHOC_MATCHING_MODE_CHILD || mode == SCE_NET_ADHOC_MATCHING_MODE_P2P)) {
++            target = newTarget(addr);
++        }
++    }
++
++    // No target available
++    if (target == nullptr) {
++        return;
++    }
++
++    if (!target->incomingPacketMessage.isSheduled) {
++        target->setRawPacket(rawPacketLength, packetLength, this->rxbuf);
++        target->keepAliveInterval = keepAliveInterval;
++
++        target->incomingPacketMessage.type = SCE_NET_ADHOC_MATCHING_EVENT_PACKET;
++        target->incomingPacketMessage.target = target;
++        target->incomingPacketMessage.isSheduled = true;
++        write(getWritePipeUid(), &target->incomingPacketMessage, sizeof(target->incomingPacketMessage));
++    }
++}
++
++void SceNetAdhocMatchingContext::setTargetStatus(SceNetAdhocMatchingTarget &target, SceNetAdhocMatchingTargetStatus status) {
++    target.setStatus(status);
++    if (target.status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED || status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED) {
++        createMembersList();
++    }
++}
++
++SceNetAdhocMatchingTarget *SceNetAdhocMatchingContext::newTarget(SceNetInAddr addr) {
++    auto *target = new SceNetAdhocMatchingTarget();
++
++    if (target == nullptr) {
++        return nullptr;
++    }
++
++    setTargetStatus(*target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
++    target->addr.s_addr = addr.s_addr;
++    target->setPipeUids(getReadPipeUid(), getWritePipeUid());
++
++    // SceNetInternal_689B9D7D(&target->targetCount); <-- GetCurrentTargetCount?
++    if (target->targetCount == 0) {
++        target->targetCount = 1;
++    }
++
++    target->targetTimeout.isAckPending = false;
++    if (target->sendDataStatus != SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY) {
++        if (target->sendDataStatus == SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY) {
++            target->deleteRawPacket();
++        }
++        target->sendDataStatus = SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY;
++    }
++
++    target->sendDataTimeout.isAckPending = false;
++    target->next = targetList;
++    targetList = target;
++
++    return target;
++}
++
++SceNetAdhocMatchingTarget *SceNetAdhocMatchingContext::findTargetByAddr(SceNetInAddr addr) const {
++    SceNetAdhocMatchingTarget *target = this->targetList;
++    while (target != nullptr) {
++        if (target->addr.s_addr == addr.s_addr && !target->deleteTarget)
++            return target;
++        target = target->next;
++    }
++
++    return nullptr;
++};
++
++void SceNetAdhocMatchingContext::getMemberList(SceNetAdhocMatchingTargetStatus status, SceNetInAddr *addrList, SceSize &addrListSize) const {
++    auto *target = targetList;
++    SceSize index = 0;
++
++    for (; target != nullptr; target = target->next) {
++        if (target->status < status) {
++            continue;
++        }
++        if (addrListSize <= index) {
++            break;
++        }
++        if (addrList != nullptr) {
++            memcpy(&addrList[index], &target->addr, sizeof(SceNetInAddr));
++        }
++        index++;
++    }
++
++    addrListSize = index;
++}
++
++SceSize SceNetAdhocMatchingContext::countTargetsWithStatusOrBetter(SceNetAdhocMatchingTargetStatus status) const {
++    SceSize i = 0;
++    SceNetAdhocMatchingTarget *target;
++    for (target = this->targetList; target != nullptr; target = target->next) {
++        if (target->status >= status)
++            i++;
++    }
++    return i;
++}
++
++bool SceNetAdhocMatchingContext::isTargetAddressHigher(SceNetAdhocMatchingTarget &target) const {
++    return ownAddress < target.addr.s_addr;
++}
++
++void SceNetAdhocMatchingContext::deleteTarget(SceNetAdhocMatchingTarget *target) {
++    SceNetAdhocMatchingTarget *previous = nullptr;
++    auto *current = this->targetList;
++
++    // Find and remove target from list
++    while (true) {
++        if (current == nullptr) {
++            return;
++        }
++
++        if (current == target) {
++            if (previous == nullptr) {
++                this->targetList = current->next;
++                break;
++            }
++            previous->next = current->next;
++            break;
++        }
++
++        previous = current;
++        current = current->next;
++    }
++
++    target->deleteOptMessage();
++    target->deleteSendData();
++    target->deleteRawPacket();
++
++    delete target;
++}
++
++void SceNetAdhocMatchingContext::deleteAllTargets(EmuEnvState &emuenv, SceUID thread_id) {
++    auto *target = this->targetList;
++    while (target != nullptr) {
++        deleteAllTimedFunctions(*target);
++        target->deleteOptMessage();
++        target->deleteSendData();
++        target->deleteRawPacket();
++        auto *nextTarget = target->next;
++        delete target;
++        target = nextTarget;
++    }
++    this->targetList = nullptr;
++    broadcastBye(emuenv, thread_id);
++}
++
++int SceNetAdhocMatchingContext::createMembersList() {
++    SceSize target_count = countTargetsWithStatusOrBetter(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED);
++
++    SceNetAdhocMatchingMemberMessage *message = new SceNetAdhocMatchingMemberMessage();
++
++    if (message == nullptr)
++        return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++
++    message->header = {
++        .one = 1,
++        .type = SCE_NET_ADHOC_MATCHING_PACKET_TYPE_MEMBER_LIST,
++    };
++    message->parent.s_addr = this->ownAddress;
++    message->members.resize(target_count);
++    getMemberList(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED, message->members.data(), target_count);
++    message->header.packetLength = static_cast<SceUShort16>(target_count + 1) * sizeof(SceNetInAddr);
++
++    deleteMemberList();
++    this->memberMsg = message;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int SceNetAdhocMatchingContext::getMembers(SceSize &outMembersCount, SceNetAdhocMatchingMember *outMembers) const {
++    if (this->memberMsg == nullptr) {
++        outMembersCount = 0;
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    if (outMembersCount > 0 && outMembers != nullptr) {
++        memcpy(&outMembers[0], &this->memberMsg->parent, sizeof(SceNetAdhocMatchingMember));
++    }
++
++    SceSize count = 1;
++    for (SceSize i = 0; i < this->memberMsg->members.size(); i++) {
++        if (count >= outMembersCount) {
++            break;
++        }
++        if (outMembers != nullptr) {
++            memcpy(&outMembers[count], &this->memberMsg->members[i], sizeof(SceNetAdhocMatchingMember));
++        }
++        count++;
++    }
++
++    outMembersCount = count;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++void SceNetAdhocMatchingContext::deleteMemberList() {
++    if (this->memberMsg == nullptr)
++        return;
++
++    delete this->memberMsg;
++    this->memberMsg = nullptr;
++}
++
++int SceNetAdhocMatchingContext::getHelloOpt(SceSize &outOptLen, void *outOpt) const {
++    if (this->helloMsg == nullptr) {
++        outOptLen = 0;
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    if (this->helloMsg->optBuffer.size() < outOptLen) {
++        outOptLen = this->helloMsg->optBuffer.size();
++    }
++
++    if (outOpt != nullptr && 0 < outOptLen) {
++        memcpy(outOpt, this->helloMsg, outOptLen);
++    }
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++};
++
++int SceNetAdhocMatchingContext::setHelloOpt(SceSize optlen, void *opt) {
++    auto *message = new SceNetAdhocMatchingHelloMessage();
++
++    if (message == nullptr)
++        return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++
++    message->header = {
++        .one = 1,
++        .type = SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO,
++        .packetLength = static_cast<SceUShort16>(optlen + 8),
++    };
++    message->helloInterval = helloInterval;
++    message->rexmtInterval = keepAliveInterval;
++    message->unk_6c = true;
++    message->padding = {};
++
++    if (optlen > 0) {
++        message->optBuffer.resize(optlen);
++        memcpy(message->optBuffer.data(), opt, optlen);
++    }
++
++    deleteHelloMessage();
++    this->helloMsg = message;
++    return SCE_NET_ADHOC_MATCHING_OK;
++};
++
++void SceNetAdhocMatchingContext::deleteHelloMessage() {
++    helloPipeMsg.isSheduled = false;
++    if (this->helloMsg == nullptr)
++        return;
++
++    delete this->helloMsg;
++    this->helloMsg = nullptr;
++}
++
++void SceNetAdhocMatchingContext::addHelloTimedFunct(uint64_t time_interval) {
++    if (shouldHelloReqBeProcessed) {
++        calloutSyncing.deleteTimedFunction(&helloTimedFunction);
++        shouldHelloReqBeProcessed = false;
++    }
++    calloutSyncing.addTimedFunction(&helloTimedFunction, time_interval, &helloTimeoutCallback, this);
++    shouldHelloReqBeProcessed = true;
++}
++
++void SceNetAdhocMatchingContext::addSendDataTimeout(SceNetAdhocMatchingTarget &target) {
++    if (target.sendDataTimeout.isAckPending) {
++        calloutSyncing.deleteTimedFunction(&target.sendDataTimeoutFunction);
++        target.sendDataTimeout.isAckPending = false;
++    }
++    calloutSyncing.addTimedFunction(&target.sendDataTimeoutFunction, rexmtInterval, &sendDataTimeoutCallback, &target);
++    target.sendDataTimeout.isAckPending = true;
++}
++
++void SceNetAdhocMatchingContext::addRegisterTargetTimeout(SceNetAdhocMatchingTarget &target) {
++    if (target.targetTimeout.isAckPending) {
++        calloutSyncing.deleteTimedFunction(&target.targetTimeoutFunction);
++        target.targetTimeout.isAckPending = false;
++    }
++    calloutSyncing.addTimedFunction(&target.targetTimeoutFunction, rexmtInterval, &registerTargetTimeoutCallback, &target);
++    target.targetTimeout.isAckPending = true;
++}
++
++void SceNetAdhocMatchingContext::addTargetTimeout(SceNetAdhocMatchingTarget &target) {
++    int interval = keepAliveInterval;
++    if (mode == SCE_NET_ADHOC_MATCHING_MODE_CHILD) {
++        interval = target.keepAliveInterval;
++    }
++
++    if (target.targetTimeout.isAckPending) {
++        calloutSyncing.deleteTimedFunction(&target.targetTimeoutFunction);
++        target.targetTimeout.isAckPending = false;
++    }
++    calloutSyncing.addTimedFunction(&target.targetTimeoutFunction, interval, &targetTimeoutCallback, &target);
++    target.targetTimeout.isAckPending = true;
++}
++
++void SceNetAdhocMatchingContext::deleteHelloTimedFunction() {
++    if (!shouldHelloReqBeProcessed)
++        return;
++
++    calloutSyncing.deleteTimedFunction(&this->helloTimedFunction);
++    shouldHelloReqBeProcessed = false;
++}
++
++void SceNetAdhocMatchingContext::deleteSendDataTimeout(SceNetAdhocMatchingTarget &target) {
++    if (target.sendDataTimeout.isAckPending) {
++        calloutSyncing.deleteTimedFunction(&target.sendDataTimeoutFunction);
++        target.sendDataTimeout.isAckPending = false;
++    }
++}
++
++void SceNetAdhocMatchingContext::deleteAllTimedFunctions(SceNetAdhocMatchingTarget &target) {
++    if (target.sendDataTimeout.isAckPending) {
++        calloutSyncing.deleteTimedFunction(&target.sendDataTimeoutFunction);
++        target.sendDataTimeout.isAckPending = false;
++    }
++    if (target.targetTimeout.isAckPending) {
++        calloutSyncing.deleteTimedFunction(&target.targetTimeoutFunction);
++        target.targetTimeout.isAckPending = false;
++    }
++}
++
++void SceNetAdhocMatchingContext::SendNotificationQueue(EmuEnvState &emuenv, SceUID thread_id) {
++    if (!this->handler) {
++        return;
++    }
++
++    while (!notificationQueue.empty()) {
++        const auto notification = notificationQueue.front();
++
++        Address vPeer = alloc(emuenv.mem, sizeof(SceNetInAddr), "adhocHandlerPeer");
++        Address vOpt = 0;
++
++        vPeer = alloc(emuenv.mem, sizeof(SceNetInAddr), "adhocHandlerPeer");
++        memcpy(Ptr<char>(vPeer).get(emuenv.mem), &notification.peer, sizeof(SceNetInAddr));
++
++        if (!notification.opt.empty()) {
++            vOpt = alloc(emuenv.mem, notification.opt.size(), "adhocHandlerOpt");
++            memcpy(Ptr<char>(vOpt).get(emuenv.mem), notification.opt.data(), notification.opt.size());
++        }
++
++        const ThreadStatePtr thread = lock_and_find(thread_id, emuenv.kernel.threads, emuenv.kernel.mutex);
++        thread->run_adhoc_callback(this->handler, this->id, (uint32_t)notification.type, Ptr<char>(vPeer), notification.opt.size(), Ptr<char>(vOpt));
++
++        free(emuenv.mem, vPeer); // free peer
++        if (!notification.opt.empty())
++            free(emuenv.mem, vOpt); // free opt
++        notificationQueue.pop();
++    }
++}
++
++void SceNetAdhocMatchingContext::notifyHandler(SceNetAdhocMatchingHandlerEventType type, SceNetInAddr peer, SceSize optLen, const void *opt) {
++    HandlerNotification notification{
++        .type = type,
++        .peer = peer,
++    };
++    const SceNetAdhocMatchingPipeMessage notifyMsg{
++        .type = SCE_NET_ADHOC_MATCHING_EVENT_NOTIFICATION,
++    };
++
++    notification.opt.resize(optLen);
++    if (optLen > 0)
++        memcpy(notification.opt.data(), opt, optLen);
++
++    notificationQueue.push(notification);
++    write(getWritePipeUid(), &notifyMsg, sizeof(SceNetAdhocMatchingPipeMessage));
++}
++
++uint32_t SceNetAdhocMatchingContext::getBroadcastAddr() {
++    return INADDR_BROADCAST;
++}
++
++uint32_t SceNetAdhocMatchingContext::getTargetAddr(const SceNetAdhocMatchingTarget &target) {
++    // Broadcast if two instances have the same address
++    if (target.addr.s_addr == ownAddress)
++        return getBroadcastAddr();
++    return target.addr.s_addr;
++}
++
++int SceNetAdhocMatchingContext::sendMemberListToTarget(EmuEnvState &emuenv, SceUID thread_id, const SceNetAdhocMatchingTarget &target) {
++    const int flags = 0x400; // 0x480 if sdk version < 0x1500000
++
++    SceNetSockaddrIn addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = getTargetAddr(target),
++        .sin_vport = htons(port),
++    };
++
++    auto result = CALL_EXPORT(sceNetSendto, this->sendSocket, this->memberMsg->serialize().data(), this->memberMsg->messageSize(), flags, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++
++    if (result == SCE_NET_ERROR_EAGAIN)
++        result = SCE_NET_ADHOC_MATCHING_OK;
++
++    return result;
++}
++
++int SceNetAdhocMatchingContext::sendDataMessageToTarget(EmuEnvState &emuenv, SceUID thread_id, const SceNetAdhocMatchingTarget &target, SceNetAdhocMatchingPacketType type, std::span<const char> data) {
++    const int flags = 0x400; // 0x480 if sdk version < 0x1500000
++
++    auto *msg = new SceNetAdhocMatchingDataMessage();
++
++    msg->header = {
++        .one = 1,
++        .type = type,
++        .packetLength = static_cast<SceUShort16>(data.size() + 8),
++    };
++
++    msg->targetId = target.targetCount;
++
++    msg->packetId = target.sendDataCount;
++    if (type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_DATA_ACK)
++        msg->packetId = target.recvDataCount - 1;
++
++    msg->dataBuffer.resize(data.size());
++    memcpy(msg->dataBuffer.data(), data.data(), data.size());
++
++    SceNetSockaddrIn addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = getTargetAddr(target),
++        .sin_vport = htons(port),
++    };
++
++    auto result = CALL_EXPORT(sceNetSendto, this->sendSocket, msg->serialize().data(), msg->messageSize(), flags, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++
++    if (result == SCE_NET_ERROR_EAGAIN) {
++        result = SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    return result;
++}
++
++int SceNetAdhocMatchingContext::sendOptDataToTarget(EmuEnvState &emuenv, SceUID thread_id, const SceNetAdhocMatchingTarget &target, SceNetAdhocMatchingPacketType type, std::span<const char> opt) {
++    const int flags = 0x400; // 0x480 if sdk version < 0x1500000
++    int headerSize = 4;
++
++    auto *msg = new SceNetAdhocMatchingOptMessage();
++
++    if (type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_HELLO_ACK) {
++        headerSize = 0x14;
++    }
++    if (type == SCE_NET_ADHOC_MATCHING_PACKET_TYPE_UNK3) {
++        headerSize = 0x14;
++    }
++
++    msg->header = {
++        .one = 1,
++        .type = type,
++        .packetLength = static_cast<SceUShort16>(opt.size()),
++    };
++
++    if (opt.size() > 0) {
++        msg->dataBuffer.resize(opt.size());
++        memcpy(msg->dataBuffer.data(), opt.data(), opt.size());
++    }
++
++    if (headerSize == 0x14) {
++        msg->targetCount = target.targetCount;
++        msg->padding = {};
++    }
++
++    SceNetSockaddrIn addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = getTargetAddr(target),
++        .sin_vport = htons(port),
++    };
++
++    auto result = CALL_EXPORT(sceNetSendto, this->sendSocket, msg->serialize().data(), opt.size() + headerSize, flags, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++    if (result == SCE_NET_ERROR_EAGAIN) {
++        result = SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    return result;
++}
++
++int SceNetAdhocMatchingContext::broadcastHello(EmuEnvState &emuenv, SceUID thread_id) {
++    const int flags = 0x400; // 0x480 if sdk version < 0x1500000
++
++    if (this->helloMsg == nullptr) {
++        return SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG;
++    }
++
++    SceNetSockaddrIn addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = getBroadcastAddr(),
++        .sin_vport = htons(this->port),
++    };
++
++    auto result = CALL_EXPORT(sceNetSendto, this->sendSocket, this->helloMsg->serialize().data(), this->helloMsg->messageSize(), flags, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++    if (result == SCE_NET_ERROR_EAGAIN)
++        result = SCE_NET_ADHOC_MATCHING_OK;
++
++    return result;
++};
++
++int SceNetAdhocMatchingContext::broadcastBye(EmuEnvState &emuenv, SceUID thread_id) {
++    const int flags = 0x400; // 0x480 if sdk version < 0x1500000
++
++    const SceNetAdhocMatchingMessageHeader byeMsg = {
++        .one = 1,
++        .type = SCE_NET_ADHOC_MATCHING_PACKET_TYPE_BYE,
++        .packetLength = 0,
++    };
++
++    const SceNetSockaddrIn addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = getBroadcastAddr(),
++        .sin_vport = htons(this->port),
++    };
++
++    auto result = CALL_EXPORT(sceNetSendto, this->sendSocket, &byeMsg, sizeof(SceNetAdhocMatchingMessageHeader), flags, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++    if (result == SCE_NET_ERROR_EAGAIN)
++        result = SCE_NET_ADHOC_MATCHING_OK;
++
++    return result;
++}
++
++int SceNetAdhocMatchingContext::broadcastAbort(EmuEnvState &emuenv, SceUID thread_id) {
++    shouldExit = true;
++
++    const SceNetAdhocMatchingMessageHeader abortMsg = {
++        .one = 0,
++        .type = SCE_NET_ADHOC_MATCHING_PACKET_TYPE_ABORT,
++        .packetLength = 0,
++    };
++
++    const SceNetSockaddrIn addr = {
++        .sin_len = sizeof(SceNetSockaddrIn),
++        .sin_family = AF_INET,
++        .sin_port = htons(SCE_NET_ADHOC_DEFAULT_PORT),
++        .sin_addr = ownAddress,
++        .sin_vport = htons(this->port),
++    };
++
++    auto result = CALL_EXPORT(sceNetSendto, this->sendSocket, &abortMsg, sizeof(SceNetAdhocMatchingMessageHeader), 0, (SceNetSockaddr *)&addr, sizeof(SceNetSockaddrIn));
++    if (result == SCE_NET_ERROR_EAGAIN)
++        result = SCE_NET_ADHOC_MATCHING_OK;
++
++    return result;
++}
+diff --git a/vita3k/adhoc/src/matchingTarget.cpp b/vita3k/adhoc/src/matchingTarget.cpp
+new file mode 100644
+index 0000000000..39d87b6db1
+--- /dev/null
++++ b/vita3k/adhoc/src/matchingTarget.cpp
+@@ -0,0 +1,123 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#include "adhoc/matchingTarget.h"
++
++void SceNetAdhocMatchingTarget::setSendDataStatus(SceNetAdhocMatchingSendDataStatus status) {
++    if (this->sendDataStatus == status)
++        return;
++    if (this->sendDataStatus == SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY && status == SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY)
++        deleteSendData();
++    this->sendDataStatus = status;
++}
++
++void SceNetAdhocMatchingTarget::setStatus(SceNetAdhocMatchingTargetStatus status) {
++    if (this->status == status) {
++        return;
++    }
++
++    bool is_target_in_progress = this->status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES || this->status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2;
++    bool is_status_not_in_progress = status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2 && status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES2;
++
++    if (is_target_in_progress && is_status_not_in_progress) {
++        deleteOptMessage();
++    }
++
++    if (this->status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED && status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED) {
++        this->sendDataCount = 0;
++        this->recvDataCount = 0;
++    }
++
++    if (this->status == SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED && status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED && this->sendDataStatus != SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY) {
++        if (this->sendDataStatus == SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_BUSY)
++            deleteSendData();
++        this->sendDataStatus = SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY;
++    }
++
++    this->status = status;
++}
++
++void SceNetAdhocMatchingTarget::setPipeUids(int read, int write) {
++    this->msgPipeUid[0] = read;
++    this->msgPipeUid[1] = write;
++}
++
++int SceNetAdhocMatchingTarget::getReadPipeUid() const {
++    return this->msgPipeUid[0];
++}
++
++int SceNetAdhocMatchingTarget::getWritePipeUid() const {
++    return this->msgPipeUid[1];
++}
++
++int SceNetAdhocMatchingTarget::setOptMessage(SceSize length, const char *data) {
++    this->opt.resize(length);
++    if (length != 0)
++        memcpy(this->opt.data(), data, length);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++std::span<const char> SceNetAdhocMatchingTarget::getOpt() const {
++    return opt;
++}
++
++void SceNetAdhocMatchingTarget::deleteOptMessage() {
++    opt.clear();
++}
++
++int SceNetAdhocMatchingTarget::setRawPacket(SceSize rawLength, SceSize length, const char *data) {
++    this->packet.resize(rawLength);
++    if (rawLength == 0) {
++        this->packetLength = 0;
++        return SCE_NET_ADHOC_MATCHING_OK;
++    }
++
++    memcpy(this->packet.data(), data, rawLength);
++    this->packetLength = length + sizeof(SceNetAdhocMatchingMessageHeader);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++SceSize SceNetAdhocMatchingTarget::getPacketLen() const {
++    return this->packetLength;
++}
++
++std::span<const char> SceNetAdhocMatchingTarget::getRawPacket() const {
++    return this->packet;
++}
++
++void SceNetAdhocMatchingTarget::deleteRawPacket() {
++    this->packetLength = 0;
++    this->packet.clear();
++}
++
++int SceNetAdhocMatchingTarget::setSendData(SceSize length, const char *data) {
++    this->sendData.resize(length);
++    if (length != 0)
++        memcpy(this->sendData.data(), data, length);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++std::span<const char> SceNetAdhocMatchingTarget::getSendData() const {
++    return this->sendData;
++}
++
++void SceNetAdhocMatchingTarget::deleteSendData() {
++    this->sendData.clear();
++}
+diff --git a/vita3k/adhoc/src/state.cpp b/vita3k/adhoc/src/state.cpp
+new file mode 100644
+index 0000000000..d7830f3d30
+--- /dev/null
++++ b/vita3k/adhoc/src/state.cpp
+@@ -0,0 +1,169 @@
++// Vita3K emulator project
++// Copyright (C) 2024 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#include <adhoc/matchingContext.h>
++#include <adhoc/state.h>
++
++AdhocState::~AdhocState() {
++    deleteAllMatchingContext();
++    deleteMutex();
++    deleteMSpace();
++}
++
++int AdhocState::initializeMutex() {
++    // Initialize mutex
++    is_mutex_initialized = true;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int AdhocState::deleteMutex() {
++    if (is_mutex_initialized) {
++        // Delete mutex
++    }
++    is_mutex_initialized = false;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++std::mutex &AdhocState::getMutex() {
++    return mutex;
++}
++
++int AdhocState::createMSpace(SceSize poolsize, void *poolptr) {
++    // Just a placeholder. We don't really need this kind of allocation
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int AdhocState::deleteMSpace() {
++    // Just a placeholder. We don't really need this kind of allocation
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int AdhocState::initializeMatchingContextList() {
++    contextList = nullptr;
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++int AdhocState::isAnyMatchingContextRunning() {
++    SceNetAdhocMatchingContext *context = contextList;
++    for (; context != nullptr; context = context->getNext()) {
++        if (context->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING)
++            return SCE_NET_ADHOC_MATCHING_ERROR_BUSY;
++    }
++    return SCE_NET_ADHOC_MATCHING_OK;
++}
++
++SceNetAdhocMatchingContext *AdhocState::findMatchingContextById(SceUID id) {
++    // Iterate Matching Context List
++    SceNetAdhocMatchingContext *context = contextList;
++    for (; context != nullptr; context = context->getNext()) {
++        return context;
++        if (context->getId() != id)
++            continue;
++        return context;
++    }
++
++    // Context not found
++    return nullptr;
++};
++
++int AdhocState::createMatchingContext(SceUShort16 port) {
++    SceNetAdhocMatchingContext *context = contextList;
++
++    // Check for port conflicts
++    for (; context != nullptr; context = context->getNext()) {
++        if (context->getPort() != port)
++            continue;
++        return SCE_NET_ADHOC_MATCHING_ERROR_PORT_IN_USE;
++    }
++
++    int next_id = 1;
++
++    if (matchingCtxCount < SCE_NET_ADHOC_MATCHING_MAXNUM - 1) {
++        matchingCtxCount++;
++    }
++
++    while (true) {
++        // We did a full loop. There are no id available.
++        if (next_id == matchingCtxCount) {
++            return SCE_NET_ADHOC_MATCHING_ERROR_ID_NOT_AVAIL;
++        }
++
++        context = findMatchingContextById(next_id);
++
++        // This id is already in use. Find next id.
++        if (context != nullptr) {
++            next_id++;
++            if (next_id >= SCE_NET_ADHOC_MATCHING_MAXNUM) {
++                next_id = 1;
++            }
++            continue;
++        }
++
++        // Return if an error occured
++        if (next_id < SCE_NET_ADHOC_MATCHING_OK) {
++            matchingCtxCount = next_id;
++            return next_id;
++        }
++
++        matchingCtxCount = next_id;
++        auto *newContext = new SceNetAdhocMatchingContext();
++
++        if (newContext == nullptr) {
++            return SCE_NET_ADHOC_MATCHING_ERROR_NO_SPACE;
++        }
++
++        // Add new element to the list
++        newContext->setId(next_id);
++        newContext->setNext(contextList);
++        contextList = newContext;
++        return next_id;
++    }
++}
++
++void AdhocState::deleteMatchingContext(SceNetAdhocMatchingContext *ctx) {
++    SceNetAdhocMatchingContext *context = contextList;
++    SceNetAdhocMatchingContext *previous_ctx = nullptr;
++    for (; context != nullptr; context = context->getNext()) {
++        if (ctx != context) {
++            previous_ctx = context;
++            continue;
++        }
++        if (previous_ctx != nullptr) {
++            previous_ctx->setNext(context->getNext());
++            break;
++        }
++
++        contextList = context->getNext();
++        break;
++    }
++
++    if (ctx != nullptr) {
++        delete ctx;
++        ctx = nullptr;
++    }
++};
++
++void AdhocState::deleteAllMatchingContext() {
++    SceNetAdhocMatchingContext *context = contextList;
++    while (context != nullptr) {
++        auto *next_ctx = context->getNext();
++
++        delete context;
++        context = next_ctx;
++    }
++    contextList = nullptr;
++};
+diff --git a/vita3k/adhoc/src/threads.cpp b/vita3k/adhoc/src/threads.cpp
+new file mode 100644
+index 0000000000..2159f13e37
+--- /dev/null
++++ b/vita3k/adhoc/src/threads.cpp
+@@ -0,0 +1,141 @@
++// Vita3K emulator project
++// Copyright (C) 2023 Vita3K team
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License along
++// with this program; if not, write to the Free Software Foundation, Inc.,
++// 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++
++#include <mutex>
++
++#include "adhoc/calloutSyncing.h"
++#include "adhoc/matchingContext.h"
++#include "adhoc/matchingTarget.h"
++#include "adhoc/state.h"
++#include "adhoc/threads.h"
++#include "net/types.h"
++
++#include "../SceNet/SceNet.h"
++
++int adhocMatchingEventThread(EmuEnvState &emuenv, SceUID thread_id, SceUID id) {
++    auto ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    SceNetAdhocMatchingPipeMessage pipeMessage;
++    while (ctx->isRunning()) {
++        if (read(ctx->getReadPipeUid(), &pipeMessage, sizeof(pipeMessage)) < 0)
++            return 0;
++
++        // Special notifications
++        switch (pipeMessage.type) {
++        case SCE_NET_ADHOC_MATCHING_EVENT_ABORT:
++            ctx->broadcastAbort(emuenv, thread_id);
++            return 0;
++        case SCE_NET_ADHOC_MATCHING_EVENT_NOTIFICATION:
++            ctx->SendNotificationQueue(emuenv, thread_id);
++            break;
++        default:
++            break;
++        }
++
++        std::lock_guard guard(emuenv.adhoc.getMutex());
++
++        switch (pipeMessage.type) {
++        case SCE_NET_ADHOC_MATCHING_EVENT_PACKET:
++            ctx->handleEventMessage(emuenv, thread_id, pipeMessage.target);
++            break;
++        case SCE_NET_ADHOC_MATCHING_EVENT_REGISTRATION_TIMEOUT:
++            ctx->handleEventRegistrationTimeout(emuenv, thread_id, pipeMessage.target);
++            break;
++        case SCE_NET_ADHOC_MATCHING_EVENT_TARGET_TIMEOUT:
++            ctx->handleEventTargetTimeout(emuenv, thread_id, pipeMessage.target);
++            break;
++        case SCE_NET_ADHOC_MATCHING_EVENT_HELLO_TIMEOUT:
++            ctx->handleEventHelloTimeout(emuenv, thread_id);
++            break;
++        case SCE_NET_ADHOC_MATCHING_EVENT_DATA_TIMEOUT:
++            ctx->handleEventDataTimeout(pipeMessage.target);
++            break;
++        default:
++            break;
++        }
++
++        if (pipeMessage.target == nullptr) {
++            continue;
++        }
++
++        if (pipeMessage.target->deleteTarget && !pipeMessage.target->incomingPacketMessage.isSheduled && !pipeMessage.target->targetTimeout.message.isSheduled) {
++            ctx->deleteTarget(pipeMessage.target);
++        }
++    }
++
++    return 0;
++};
++
++int adhocMatchingInputThread(EmuEnvState &emuenv, SceUID thread_id, SceUID id) {
++    auto ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    SceNetSockaddrIn fromAddr{};
++    unsigned int fromAddrLen = sizeof(SceNetSockaddrIn);
++
++    while (ctx->isRunning()) {
++        int rawPacketSize;
++        SceNetAdhocMatchingMessageHeader packet;
++
++        // Wait until valid data arrives
++        while (ctx->isRunning()) {
++            rawPacketSize = CALL_EXPORT(sceNetRecvfrom, ctx->recvSocket, ctx->rxbuf, ctx->rxbuflen, 0, (SceNetSockaddr *)&fromAddr, &fromAddrLen);
++            if (rawPacketSize < SCE_NET_ADHOC_MATCHING_OK)
++                return 0;
++            if (rawPacketSize < sizeof(SceNetAdhocMatchingMessageHeader))
++                continue;
++            if (fromAddr.sin_addr.s_addr == ctx->ownAddress && fromAddr.sin_port == ctx->ownPort)
++                continue;
++
++            packet.parse(ctx->rxbuf, rawPacketSize);
++            if (packet.one != 1)
++                continue;
++            if (rawPacketSize >= packet.packetLength + sizeof(SceNetAdhocMatchingMessageHeader))
++                break;
++        }
++
++        if (!ctx->isRunning())
++            return 0;
++
++        // We received the whole packet, we can now commence the parsing and the fun
++        std::lock_guard guard(emuenv.adhoc.getMutex());
++        ctx->handleIncommingPackage(fromAddr.sin_addr, rawPacketSize, packet.packetLength);
++    }
++
++    return 0;
++};
++
++int adhocMatchingCalloutThread(EmuEnvState &emuenv, SceUID id) {
++    auto ctx = emuenv.adhoc.findMatchingContextById(id);
++    auto &calloutSyncing = ctx->getCalloutSyncing();
++
++    while (calloutSyncing.isRunning()) {
++        int sleepTime = calloutSyncing.excecuteTimedFunctions();
++
++        // Limit sleep time to something reasonable
++        if (sleepTime <= 0) {
++            sleepTime = 1;
++        }
++        if (sleepTime > 50) {
++            sleepTime = 50;
++        }
++
++        // TODO use ctx->calloutSyncing.condvar to break from this sleep early
++        std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime));
++    }
++
++    return 0;
++};
+diff --git a/vita3k/emuenv/CMakeLists.txt b/vita3k/emuenv/CMakeLists.txt
+index fda7ebf144..5abde73ca2 100644
+--- a/vita3k/emuenv/CMakeLists.txt
++++ b/vita3k/emuenv/CMakeLists.txt
+@@ -5,4 +5,4 @@ add_library(
+ 
+ target_include_directories(emuenv INTERFACE include)
+ target_link_libraries(emuenv PUBLIC mem)
+-target_link_libraries(emuenv PRIVATE audio config ctrl dialog display ime io kernel motion net ngs nids np regmgr renderer touch gdbstub packages http)
++target_link_libraries(emuenv PRIVATE adhoc audio config ctrl dialog display ime io kernel motion net ngs nids np regmgr renderer touch gdbstub packages http)
+diff --git a/vita3k/emuenv/include/emuenv/state.h b/vita3k/emuenv/include/emuenv/state.h
+index 11bdf64e0c..4262787877 100644
+--- a/vita3k/emuenv/include/emuenv/state.h
++++ b/vita3k/emuenv/include/emuenv/state.h
+@@ -59,6 +59,7 @@ struct RegMgrState;
+ struct SfoFile;
+ struct GDBState;
+ struct HTTPState;
++struct AdhocState;
+ 
+ typedef int32_t SceInt;
+ struct IVector2 {
+@@ -104,6 +105,7 @@ struct EmuEnvState {
+     std::unique_ptr<SfoFile> _sfo_handle;
+     std::unique_ptr<GDBState> _gdb;
+     std::unique_ptr<HTTPState> _http;
++    std::unique_ptr<AdhocState> _adhoc;
+ 
+ public:
+     // App info contained in its `param.sfo` file
+@@ -176,6 +178,7 @@ struct EmuEnvState {
+     HTTPState &http;
+     int max_font_level = 0;
+     int current_font_level = 0;
++    AdhocState &adhoc;
+ 
+     EmuEnvState();
+     // declaring a destructor is necessary to forward declare unique_ptrs
+diff --git a/vita3k/emuenv/src/emuenv.cpp b/vita3k/emuenv/src/emuenv.cpp
+index 20cf8ba249..ef638fd7a1 100644
+--- a/vita3k/emuenv/src/emuenv.cpp
++++ b/vita3k/emuenv/src/emuenv.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <emuenv/state.h>
+ 
++#include <adhoc/state.h>
+ #include <audio/state.h>
+ #include <config/state.h>
+ #include <ctrl/state.h>
+@@ -88,8 +89,9 @@ EmuEnvState::EmuEnvState()
+     , sfo_handle(*_sfo_handle)
+     , _gdb(new GDBState)
+     , gdb(*_gdb)
+-    , _http(new HTTPState)
+-    , http(*_http) {
++    , http(*_http)
++    , _adhoc(new AdhocState)
++    , adhoc(*_adhoc) {
+ }
+ DISABLE_WARNING_END;
+ 
+diff --git a/vita3k/kernel/include/kernel/thread/thread_state.h b/vita3k/kernel/include/kernel/thread/thread_state.h
+index e952b831f1..1f15f6b633 100644
+--- a/vita3k/kernel/include/kernel/thread/thread_state.h
++++ b/vita3k/kernel/include/kernel/thread/thread_state.h
+@@ -98,6 +98,7 @@ struct ThreadState {
+ 
+     int init(const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option);
+     int start(SceSize arglen, const Ptr<void> argp, bool run_entry_callback = false);
++    int startAdhoc(uint32_t id, uint32_t type, const Ptr<void> peer, SceSize optLen, const Ptr<void> opt, bool run_entry_callback = false);
+     void exit(SceInt32 status);
+     void exit_delete(bool exit = true);
+ 
+@@ -115,6 +116,9 @@ struct ThreadState {
+     // args and argp are passed to thread->start as is
+     uint32_t run_guest_function(Address callback_address, SceSize args = 0, const Ptr<void> argp = Ptr<void>{});
+ 
++    // This function is called from another thread when a new adhoc matching notification is available
++    uint32_t run_adhoc_callback(Address callback_address, uint32_t id, uint32_t type, const Ptr<void> peer, SceSize optLen, const Ptr<void> opt);
++
+     void suspend();
+     void resume(bool step = false);
+     std::string log_stack_traceback() const;
+diff --git a/vita3k/kernel/src/thread.cpp b/vita3k/kernel/src/thread.cpp
+index 8722d9d855..45a87c8499 100644
+--- a/vita3k/kernel/src/thread.cpp
++++ b/vita3k/kernel/src/thread.cpp
+@@ -163,6 +163,39 @@ int ThreadState::start(SceSize arglen, const Ptr<void> argp, bool run_entry_call
+     return SCE_KERNEL_OK;
+ }
+ 
++int ThreadState::startAdhoc(uint32_t id, uint32_t type, const Ptr<void> peer, SceSize optLen, const Ptr<void> opt, bool run_entry_callback) {
++    if (status == ThreadStatus::run || call_level > 0)
++        return SCE_KERNEL_ERROR_RUNNING;
++    std::unique_lock<std::mutex> thread_lock(mutex);
++
++    run_start_callback = run_entry_callback;
++    call_level = 1;
++    load_context(*cpu, init_cpu_ctx);
++    write_pc(*cpu, entry_point);
++    write_lr(*cpu, cpu->halt_instruction_pc);
++
++    Address sp = read_sp(*cpu);
++    write_reg(*cpu, 0, id);
++    write_reg(*cpu, 1, type);
++    write_reg(*cpu, 2, peer.address());
++    write_reg(*cpu, 3, optLen);
++
++    sp -= 4;
++    memcpy(Ptr<uint32_t>(sp).get(mem), &opt, 4);
++    write_sp(*cpu, sp);
++
++    if (kernel.debugger.wait_for_debugger) {
++        to_do = ThreadToDo::suspend;
++        status = ThreadStatus::suspend;
++        kernel.debugger.wait_for_debugger = false;
++    } else {
++        to_do = ThreadToDo::run;
++    }
++    something_to_do.notify_one();
++
++    return SCE_KERNEL_OK;
++}
++
+ void ThreadState::exit(SceInt32 status) {
+     std::lock_guard<std::mutex> guard(mutex);
+     run_end_callback = true;
+@@ -375,6 +408,26 @@ uint32_t ThreadState::run_guest_function(Address callback_address, SceSize args,
+     return returned_value;
+ }
+ 
++uint32_t ThreadState::run_adhoc_callback(Address callback_address, uint32_t id, uint32_t type, const Ptr<void> peer, SceSize optLen, const Ptr<void> opt) {
++    // save the previous entry point, just in case
++    const auto old_entry_point = entry_point;
++    entry_point = callback_address;
++
++    startAdhoc(id, type, peer, optLen, opt);
++    {
++        // wait for the function to return
++        std::unique_lock<std::mutex> lock(mutex);
++        if (status != ThreadStatus::dormant || to_do == ThreadToDo::run) {
++            status_cond.wait(lock, [&]() {
++                return status == ThreadStatus::dormant && to_do != ThreadToDo::run;
++            });
++        }
++    }
++
++    entry_point = old_entry_point;
++    return returned_value;
++}
++
+ ThreadState::ThreadState(SceUID id, KernelState &kernel, MemState &mem)
+     : id(id)
+     , kernel(kernel)
+diff --git a/vita3k/modules/CMakeLists.txt b/vita3k/modules/CMakeLists.txt
+index c8c48528f7..6761147a0e 100644
+--- a/vita3k/modules/CMakeLists.txt
++++ b/vita3k/modules/CMakeLists.txt
+@@ -212,6 +212,6 @@ set(SOURCE_LIST
+ 
+ add_library(modules STATIC ${SOURCE_LIST})
+ target_include_directories(modules PUBLIC include)
+-target_link_libraries(modules PRIVATE audio codec ctrl dialog display dlmalloc gui gxm kernel mem motion net ngs np ssl packages patch printf renderer rtc sdl2 touch xxHash::xxhash)
++target_link_libraries(modules PRIVATE adhoc audio codec ctrl dialog display dlmalloc gui gxm kernel mem motion net ngs np ssl packages patch printf renderer rtc sdl2 touch xxHash::xxhash)
+ target_link_libraries(modules PUBLIC module)
+ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_LIST})
+diff --git a/vita3k/modules/SceNet/SceNet.cpp b/vita3k/modules/SceNet/SceNet.cpp
+index df9cb93ac9..505cdd52c7 100644
+--- a/vita3k/modules/SceNet/SceNet.cpp
++++ b/vita3k/modules/SceNet/SceNet.cpp
+@@ -573,12 +573,28 @@ EXPORT(int, sceNetShutdown, int sid, int how) {
+ 
+ EXPORT(int, sceNetSocket, const char *name, int domain, SceNetSocketType type, SceNetProtocol protocol) {
+     TRACY_FUNC(sceNetSocket, name, domain, type, protocol);
+-    SocketPtr sock;
+-    if (type < SCE_NET_SOCK_STREAM || type > SCE_NET_SOCK_RAW) {
+-        sock = std::make_shared<P2PSocket>(domain, type, protocol);
+-    } else {
+-        sock = std::make_shared<PosixSocket>(domain, type, protocol);
+-    }
++    int hostSockType = 0;
++    switch (type) {
++    case SCE_NET_SOCK_STREAM:
++        hostSockType = SOCK_STREAM;
++        break;
++    case SCE_NET_SOCK_DGRAM:
++        hostSockType = SOCK_DGRAM;
++        break;
++    case SCE_NET_SOCK_RAW:
++        hostSockType = SOCK_RAW;
++        break;
++        // The cases below are the biggest stub in history
++    case SCE_NET_SOCK_DGRAM_P2P:
++        hostSockType = SOCK_DGRAM;
++        break;
++    case SCE_NET_SOCK_STREAM_P2P:
++        hostSockType = SOCK_STREAM;
++        break;
++    }
++
++    LOG_ERROR("socket {} {} {}", domain, hostSockType, static_cast<int>(protocol));
++    SocketPtr sock = std::make_shared<PosixSocket>(domain, hostSockType, protocol);
+ 
+     std::vector<net_utils::AssignedAddr> addrs;
+     net_utils::getAllAssignedAddrs(addrs);
+diff --git a/vita3k/modules/SceNetAdhocMatching/SceNetAdhocMatching.cpp b/vita3k/modules/SceNetAdhocMatching/SceNetAdhocMatching.cpp
+index 355604b99d..3f732a0061 100644
+--- a/vita3k/modules/SceNetAdhocMatching/SceNetAdhocMatching.cpp
++++ b/vita3k/modules/SceNetAdhocMatching/SceNetAdhocMatching.cpp
+@@ -17,58 +17,395 @@
+ 
+ #include <module/module.h>
+ 
+-EXPORT(int, sceNetAdhocMatchingAbortSendData) {
+-    return UNIMPLEMENTED();
++#include <adhoc/matchingContext.h>
++#include <adhoc/matchingTarget.h>
++#include <adhoc/state.h>
++
++#include <util/tracy.h>
++TRACY_MODULE_NAME(SceNetAdhocMatching);
++
++EXPORT(int, sceNetAdhocMatchingAbortSendData, int id, SceNetInAddr *addr) {
++    TRACY_FUNC(sceNetAdhocMatchingAbortSendData, id, addr);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    if (addr == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING);
++
++    auto *target = ctx->findTargetByAddr(*addr);
++
++    if (target == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET);
++
++    ctx->abortSendData(*target);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingCancelTarget) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingCancelTargetWithOpt, int id, SceNetInAddr *addr, int optLen, char *opt) {
++    TRACY_FUNC(sceNetAdhocMatchingCancelTargetWithOpt, id, addr, optLen, opt);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    if (addr == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING);
++
++    auto *foundTarget = ctx->findTargetByAddr(*addr);
++    if (foundTarget == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET);
++
++    if (optLen < 0 || SCE_NET_ADHOC_MATCHING_MAXOPTLEN < optLen)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    if (0 < optLen && opt == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    const int result = ctx->cancelTargetWithOpt(emuenv, thread_id, *foundTarget, optLen, opt);
++    if (result < SCE_NET_ADHOC_MATCHING_OK)
++        return RET_ERROR(result);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingCancelTargetWithOpt) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingCancelTarget, int id, SceNetInAddr *addr) {
++    TRACY_FUNC(sceNetAdhocMatchingCancelTarget, id, addr);
++    return CALL_EXPORT(sceNetAdhocMatchingCancelTargetWithOpt, id, addr, 0, nullptr);
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingCreate) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingCreate, SceNetAdhocMatchingMode mode, int maxnum, SceUShort16 port, int rxbuflen, unsigned int helloInterval, unsigned int keepaliveInterval, int retryCount, unsigned int rexmtInterval, Ptr<void> handlerAddr) {
++    TRACY_FUNC(sceNetAdhocMatchingCreate, mode, maxnum, port, rxbuflen, helloInterval, keepaliveInterval, retryCount, rexmtInterval, handlerAddr);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++
++    if (mode < SCE_NET_ADHOC_MATCHING_MODE_PARENT || mode >= SCE_NET_ADHOC_MATCHING_MODE_MAX)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MODE);
++
++    if (maxnum < 2 || maxnum > 16)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MAXNUM);
++
++    if (rxbuflen < maxnum * 4 + 4U)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_RXBUF_TOO_SHORT);
++
++    if ((mode == SCE_NET_ADHOC_MATCHING_MODE_PARENT || mode == SCE_NET_ADHOC_MATCHING_MODE_P2P) && (helloInterval == 0 || keepaliveInterval == 0))
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    if (retryCount < 0 || rexmtInterval == 0)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    const auto id = emuenv.adhoc.createMatchingContext(port);
++
++    if (id < SCE_NET_ADHOC_MATCHING_OK)
++        return RET_ERROR(id);
++
++    const auto ctx = emuenv.adhoc.findMatchingContextById(id);
++    const int result = ctx->initialize(mode, maxnum, port, rxbuflen, helloInterval, keepaliveInterval, retryCount, rexmtInterval, handlerAddr);
++
++    if (result < SCE_NET_ADHOC_MATCHING_OK) {
++        emuenv.adhoc.deleteMatchingContext(ctx);
++        return RET_ERROR(result);
++    }
++
++    return ctx->getId();
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingDelete) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingStop, int id) {
++    TRACY_FUNC(sceNetAdhocMatchingStop, id);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    // The context is already stopping or its stopped already, nothing to do
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return SCE_NET_ADHOC_MATCHING_OK;
++
++    return ctx->stop(emuenv, thread_id);
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingGetHelloOpt) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingDelete, int id) {
++    TRACY_FUNC(sceNetAdhocMatchingDelete, id);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_IS_RUNNING);
++
++    emuenv.adhoc.deleteMatchingContext(ctx);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingGetMembers) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingGetHelloOpt, int id, SceSize *optlen, void *opt) {
++    TRACY_FUNC(sceNetAdhocMatchingGetHelloOpt, id, optlen, opt);
++
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    if (optlen == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getMode() == SCE_NET_ADHOC_MATCHING_MODE_CHILD)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MODE);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING);
++
++    return ctx->getHelloOpt(*optlen, opt);
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingInit) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingGetMembers, int id, unsigned int *membersCount, SceNetAdhocMatchingMember *members) {
++    TRACY_FUNC(sceNetAdhocMatchingGetMembers, id, membersCount, members);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    if (membersCount == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING);
++
++    return ctx->getMembers(*membersCount, members);
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingSelectTarget) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingSelectTarget, int id, SceNetInAddr *addr, int optLen, char *opt) {
++    TRACY_FUNC(sceNetAdhocMatchingSelectTarget, id, addr, optLen, opt);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    if (addr == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING);
++
++    auto foundTarget = ctx->findTargetByAddr(*addr);
++    if (foundTarget == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET);
++
++    if (optLen < 0 || SCE_NET_ADHOC_MATCHING_MAXOPTLEN < optLen)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    if (0 < optLen && opt == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    const int result = ctx->selectTarget(emuenv, thread_id, *foundTarget, optLen, opt);
++    if (result < SCE_NET_ADHOC_MATCHING_OK)
++        return RET_ERROR(result);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingSendData) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingSendData, int id, SceNetInAddr *addr, int dataLen, char *data) {
++    TRACY_FUNC(sceNetAdhocMatchingSendData, id, addr, dataLen, data);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    if (addr == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    auto *target = ctx->findTargetByAddr(*addr);
++
++    if (target == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_UNKNOWN_TARGET);
++
++    if (dataLen < 1 || dataLen > SCE_NET_ADHOC_MATCHING_MAXDATALEN)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_DATALEN);
++
++    if (data == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    if (target->status != SCE_NET_ADHOC_MATCHING_TARGET_STATUS_ESTABLISHED)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_ESTABLISHED);
++
++    if (target->sendDataStatus != SCE_NET_ADHOC_MATCHING_CONTEXT_SEND_DATA_STATUS_READY)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_DATA_BUSY);
++
++    const int result = ctx->sendData(emuenv, thread_id, *target, dataLen, data);
++    if (result < SCE_NET_ADHOC_MATCHING_OK)
++        return RET_ERROR(result);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingSetHelloOpt) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingSetHelloOpt, int id, int optlen, void *opt) {
++    TRACY_FUNC(sceNetAdhocMatchingSetHelloOpt, id, optlen, opt);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getMode() == SCE_NET_ADHOC_MATCHING_MODE_CHILD)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_MODE);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_RUNNING);
++
++    if (optlen < 0 || SCE_NET_ADHOC_MATCHING_MAXHELLOOPTLEN < optlen)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    if (0 < optlen && opt == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    return ctx->setHelloOpt(optlen, opt);
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingStart) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingStart, int id, int threadPriority, int threadStackSize, int threadCpuAffinityMask, int helloOptlen, char *helloOpt) {
++    TRACY_FUNC(sceNetAdhocMatchingStart, id, threadPriority, threadStackSize, threadCpuAffinityMask, helloOptlen, helloOpt);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    // TODO: Define MAXOPTLEN MAXDATALEN MAXHELLOOPTLEN size limits based on sdk version
++
++    std::lock_guard guard(emuenv.adhoc.getMutex());
++    SceNetAdhocMatchingContext *ctx = emuenv.adhoc.findMatchingContextById(id);
++
++    if (ctx == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ID);
++
++    if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_IS_RUNNING);
++
++    if (helloOptlen < 0 || helloOptlen > SCE_NET_ADHOC_MATCHING_MAXHELLOOPTLEN)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    if (helloOptlen > 0 && helloOpt == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_OPTLEN);
++
++    if (threadPriority == 0)
++        threadPriority = 0x10000100;
++    if (threadStackSize == 0)
++        threadPriority = 0x4000;
++
++    const int result = ctx->start(emuenv, thread_id, threadPriority, threadStackSize, threadCpuAffinityMask, helloOptlen, helloOpt);
++    if (result < SCE_NET_ADHOC_MATCHING_OK)
++        return RET_ERROR(result);
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+-EXPORT(int, sceNetAdhocMatchingStop) {
+-    return UNIMPLEMENTED();
++EXPORT(int, sceNetAdhocMatchingInit, SceSize poolsize, void *poolptr) {
++    TRACY_FUNC(sceNetAdhocMatchingInit, poolsize, poolptr);
++    if (emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_ALREADY_INITIALIZED);
++
++    if (poolptr == nullptr)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_INVALID_ARG);
++
++    int result = emuenv.adhoc.initializeMutex();
++    if (result != SCE_NET_ADHOC_MATCHING_OK)
++        return RET_ERROR(result);
++
++    if (poolsize == 0) {
++        poolsize = 0x20000;
++    }
++
++    result = emuenv.adhoc.createMSpace(poolsize, poolptr);
++    if (result != SCE_NET_ADHOC_MATCHING_OK) {
++        emuenv.adhoc.deleteMutex();
++        return RET_ERROR(result);
++    }
++
++    result = emuenv.adhoc.initializeMatchingContextList();
++    if (result != SCE_NET_ADHOC_MATCHING_OK) {
++        emuenv.adhoc.deleteMSpace();
++        emuenv.adhoc.deleteMutex();
++        return RET_ERROR(result);
++    }
++
++    emuenv.adhoc.is_initialized = true;
++
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+ 
+ EXPORT(int, sceNetAdhocMatchingTerm) {
+-    return UNIMPLEMENTED();
++    TRACY_FUNC(sceNetAdhocMatchingTerm);
++    if (!emuenv.adhoc.is_initialized)
++        return RET_ERROR(SCE_NET_ADHOC_MATCHING_ERROR_NOT_INITIALIZED);
++
++    for (int i = 0; i < SCE_NET_ADHOC_MATCHING_MAXNUM; i++) {
++        // This call will use the mutex
++        CALL_EXPORT(sceNetAdhocMatchingStop, i);
++
++        // We aren't guarded by a mutex. We need to check every iteration
++        if (!emuenv.adhoc.is_initialized)
++            continue;
++
++        std::lock_guard guard(emuenv.adhoc.getMutex());
++        auto ctx = emuenv.adhoc.findMatchingContextById(i);
++        if (ctx == nullptr)
++            continue;
++        if (ctx->getStatus() != SCE_NET_ADHOC_MATCHING_CONTEXT_STATUS_NOT_RUNNING)
++            continue;
++
++        emuenv.adhoc.deleteMatchingContext(ctx);
++    }
++
++    int result = emuenv.adhoc.isAnyMatchingContextRunning();
++    if (result != SCE_NET_ADHOC_MATCHING_OK) {
++        return RET_ERROR(result);
++    }
++
++    emuenv.adhoc.deleteAllMatchingContext();
++    emuenv.adhoc.deleteMSpace();
++    emuenv.adhoc.deleteMutex();
++    emuenv.adhoc.is_initialized = false;
++    return SCE_NET_ADHOC_MATCHING_OK;
+ }
+
+From 9d2eaec24f61faf7940a4951b8cda82d9d9215ed Mon Sep 17 00:00:00 2001
+From: Narr the Reg <5944268+german77@users.noreply.github.com>
+Date: Wed, 18 Dec 2024 21:29:09 -0600
+Subject: [PATCH 4/4] Apply PR suggestions v2
+
+---
+ vita3k/adhoc/src/matchingContext.cpp | 3 +--
+ vita3k/modules/SceNet/SceNet.cpp     | 3 +--
+ vita3k/util/src/net_utils.cpp        | 8 +++-----
+ 3 files changed, 5 insertions(+), 9 deletions(-)
+
+diff --git a/vita3k/adhoc/src/matchingContext.cpp b/vita3k/adhoc/src/matchingContext.cpp
+index 5b47199768..390a7d328a 100644
+--- a/vita3k/adhoc/src/matchingContext.cpp
++++ b/vita3k/adhoc/src/matchingContext.cpp
+@@ -513,7 +513,6 @@ void SceNetAdhocMatchingContext::processPacketFromTarget(EmuEnvState &emuenv, Sc
+ int SceNetAdhocMatchingContext::processHelloPacket(SceNetAdhocMatchingTarget &target) {
+     const SceSize targetCount = this->countTargetsWithStatusOrBetter(SCE_NET_ADHOC_MATCHING_TARGET_STATUS_INPROGRES);
+ 
+-
+     SceNetAdhocMatchingHelloMessage helloPacket;
+     const auto rawPacket = target.getRawPacket();
+     helloPacket.parse(rawPacket.data(), rawPacket.size());
+@@ -822,7 +821,7 @@ void SceNetAdhocMatchingContext::handleEventRegistrationTimeout(EmuEnvState &emu
+             return;
+         }
+         setTargetStatus(*target, SCE_NET_ADHOC_MATCHING_TARGET_STATUS_CANCELLED);
+-        sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL,{});
++        sendOptDataToTarget(emuenv, thread_id, *target, SCE_NET_ADHOC_MATCHING_PACKET_TYPE_CANCEL, {});
+         notifyHandler(SCE_NET_ADHOC_MATCHING_HANDLER_EVENT_TIMEOUT, target->addr);
+     }
+ 
+diff --git a/vita3k/modules/SceNet/SceNet.cpp b/vita3k/modules/SceNet/SceNet.cpp
+index 505cdd52c7..9f23b1c960 100644
+--- a/vita3k/modules/SceNet/SceNet.cpp
++++ b/vita3k/modules/SceNet/SceNet.cpp
+@@ -22,7 +22,7 @@
+ #include <net/state.h>
+ #include <net/types.h>
+ #include <util/lock_and_find.h>
+-#include "util/net_utils.h"
++#include <util/net_utils.h>
+ 
+ #include <chrono>
+ #include <thread>
+@@ -618,7 +618,6 @@ EXPORT(int, sceNetSocket, const char *name, int domain, SceNetSocketType type, S
+ 
+ EXPORT(int, sceNetSocketAbort, int sid) {
+     TRACY_FUNC(sceNetSocketAbort, sid);
+-    LOG_INFO("sceNetSocketAbort");
+     auto sock = lock_and_find(sid, emuenv.net.socks, emuenv.kernel.mutex);
+     if (!sock) {
+         return RET_ERROR(SCE_NET_EBADF);
+diff --git a/vita3k/util/src/net_utils.cpp b/vita3k/util/src/net_utils.cpp
+index 5846b682ba..71ab4db893 100644
+--- a/vita3k/util/src/net_utils.cpp
++++ b/vita3k/util/src/net_utils.cpp
+@@ -511,10 +511,8 @@ void getAllAssignedAddrs(std::vector<AssignedAddr> &outAddrs) {
+             pAdapter = pAdapter->Next;
+         }
+     } else {
+-        LOG_CRITICAL("GetAdaptersInfo failed with error: %d", dwRetVal);
++        LOG_CRITICAL("GetAdaptersInfo failed with error: {}", dwRetVal);
+     }
+-    if (outAddrs.size() == 0)
+-        outAddrs.push_back({ "localhost", "127.0.0.1", "255.255.255.255" });
+ #else
+     struct ifaddrs *ifAddrStruct = NULL;
+     struct ifaddrs *ifa = NULL;
+@@ -541,9 +539,9 @@ void getAllAssignedAddrs(std::vector<AssignedAddr> &outAddrs) {
+     }
+     if (ifAddrStruct != NULL)
+         freeifaddrs(ifAddrStruct);
+-    if (outAddrs.size() == 0)
+-        outAddrs.push_back({ "lo", "127.0.0.1", "255.255.255.255" });
+ #endif
++    if (outAddrs.empty())
++        outAddrs.push_back({ "localhost", "127.0.0.1", "255.255.255.255" });
+ }
+ 
+ } // namespace net_utils
