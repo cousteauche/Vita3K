@@ -17,8 +17,6 @@
 
 #include <mem/functions.h>
 #include <mem/state.h>
-// Assuming Address class is defined here
-#include <address.h> 
 
 #include <util/align.h>
 #include <util/log.h>
