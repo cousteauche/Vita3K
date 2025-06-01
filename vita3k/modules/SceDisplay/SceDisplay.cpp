@@ -32,6 +32,35 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
+    // WipEout 2048 specific logging
+    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+        static int call_count = 0;
+        static int frame_count = 0;
+        static auto last_time = std::chrono::high_resolution_clock::now();
+        
+        call_count++;
+        
+        // Log pattern every 60 calls (roughly 1-2 seconds)
+        if (call_count % 60 == 0) {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
+            
+            LOG_INFO("WipEout vsync pattern - vcount: {}, is_since_setbuf: {}, thread: {}, calls/sec: {:.1f}", 
+                     vcount, is_since_setbuf, thread->name, 
+                     (60.0f * 1000.0f) / duration);
+            
+            last_time = now;
+        }
+        
+        // Track SetFrameBuf calls specifically
+        if (is_since_setbuf) {
+            frame_count++;
+            if (frame_count % 30 == 0) {
+                LOG_INFO("WipEout SetFrameBuf wait - frame #{}, vcount: {}", frame_count, vcount);
+            }
+        }
+    }
+
     if (emuenv.display.fps_hack)
         // a game can use a vcount of 2 to render as 30fps
         // thus doing this can allow some games to run at 60fps
@@ -120,6 +149,24 @@ EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
 
 EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
+    
+    // WipEout 2048 specific logging for frame buffer updates
+    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+        static int setbuf_count = 0;
+        static auto last_setbuf_time = std::chrono::high_resolution_clock::now();
+        
+        setbuf_count++;
+        
+        if (setbuf_count % 30 == 0) {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_setbuf_time).count();
+            float fps = (30.0f * 1000.0f) / duration;
+            
+            LOG_INFO("WipEout SetFrameBuf rate: {:.1f} fps, sync mode: {}", fps, sync);
+            last_setbuf_time = now;
+        }
+    }
+    
     if (!pFrameBuf)
         return SCE_DISPLAY_ERROR_OK;
     if (pFrameBuf->size != sizeof(SceDisplayFrameBuf) && pFrameBuf->size != sizeof(SceDisplayFrameBuf2)) {
@@ -222,6 +269,15 @@ EXPORT(SceInt32, sceDisplayUnregisterVblankStartCallback, SceUID uid) {
 
 EXPORT(SceInt32, sceDisplayWaitSetFrameBuf) {
     TRACY_FUNC(sceDisplayWaitSetFrameBuf);
+    
+    // WipEout specific logging
+    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+        static int wait_count = 0;
+        if (++wait_count % 60 == 0) {
+            LOG_INFO("WipEout calling WaitSetFrameBuf (single vcount)");
+        }
+    }
+    
     return display_wait(emuenv, thread_id, 1, true, false);
 }
 
@@ -232,6 +288,15 @@ EXPORT(SceInt32, sceDisplayWaitSetFrameBufCB) {
 
 EXPORT(SceInt32, sceDisplayWaitSetFrameBufMulti, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitSetFrameBufMulti, vcount);
+    
+    // WipEout specific logging
+    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+        static int multi_count = 0;
+        if (++multi_count % 30 == 0) {
+            LOG_INFO("WipEout calling WaitSetFrameBufMulti with vcount: {}", vcount);
+        }
+    }
+    
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), true, false);
 }
 
@@ -242,6 +307,15 @@ EXPORT(SceInt32, sceDisplayWaitSetFrameBufMultiCB, SceUInt vcount) {
 
 EXPORT(SceInt32, sceDisplayWaitVblankStart) {
     TRACY_FUNC(sceDisplayWaitVblankStart);
+    
+    // WipEout specific logging
+    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+        static int vblank_count = 0;
+        if (++vblank_count % 60 == 0) {
+            LOG_INFO("WipEout calling WaitVblankStart (single)");
+        }
+    }
+    
     return display_wait(emuenv, thread_id, 1, false, false);
 }
 
@@ -252,6 +326,15 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartCB) {
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMulti, vcount);
+    
+    // WipEout specific logging
+    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+        static int vblank_multi_count = 0;
+        if (++vblank_multi_count % 30 == 0) {
+            LOG_INFO("WipEout calling WaitVblankStartMulti with vcount: {}", vcount);
+        }
+    }
+    
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
