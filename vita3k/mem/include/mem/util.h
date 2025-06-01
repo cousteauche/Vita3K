@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <address.h>
 
 typedef std::function<bool(Address, bool)> ProtectCallback;
 

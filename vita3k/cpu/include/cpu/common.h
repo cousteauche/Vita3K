@@ -26,6 +26,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <address.h>
 
 struct CPUState;
 struct CPUContext;
