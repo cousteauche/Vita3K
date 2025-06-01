@@ -313,6 +313,9 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     const uint32_t width = static_cast<uint32_t>(original_width * state.res_multiplier);
     const uint32_t height = static_cast<uint32_t>(original_height * state.res_multiplier);
 
+    // FIX 1: Declare bytes_per_pixel_requested before its first use
+    uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
+
     bool overlap = true;
     // Of course, this works under the assumption that range must be unique :D
     auto ite = color_address_lookup.upper_bound(address);
@@ -347,6 +350,7 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
         tiling = SurfaceTiling::Linear;
     } else {
         uint32_t pixel_stride = original_width;
+        // FIX 2: Correctly enclose all cases within the switch statement's braces
         switch (texture.texture_type()) {
         case SCE_GXM_TEXTURE_LINEAR:
             // when the texture is linear, the stride should be aligned to 8 pixels
@@ -358,22 +362,24 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
             tiling = SurfaceTiling::Tiled;
             pixel_stride = align(pixel_stride, 32);
             break;
-        case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
-            pixel_stride = next_power_of_two(pixel_stride);
+        case SCE_GXM_TEXTURE_LINEAR_STRIDED:
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel_requested;
             break;
         case SCE_GXM_TEXTURE_SWIZZLED:
-case SCE_GXM_TEXTURE_CUBE:
-case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
-case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
-    // Depth/stencil should never be swizzled, but handle it gracefully
-    LOG_WARN("Unexpected texture type {} for depth/stencil surface", static_cast<int>(texture.texture_type()));
-    return std::nullopt;
-default:
-    LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
-    return std::nullopt;
-        default:
+        case SCE_GXM_TEXTURE_CUBE:
+        case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+        case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
+            LOG_WARN("Unsupported texture type {} for color surface, treating as linear", static_cast<int>(texture.texture_type()));
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = align(pixel_stride, 8);
             break;
-        }
+        default:
+            LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
+            tiling = SurfaceTiling::Linear;
+            pixel_stride = align(pixel_stride, 8);
+            break;
+        } // End of switch statement
         stride_bytes = pixel_stride * gxm::bits_per_pixel(base_format) / 8;
     }
     uint32_t total_surface_size = stride_bytes * original_height;
@@ -398,7 +404,8 @@ default:
         // the texture start at the same location should be enough
         return std::nullopt;
 
-    uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
+    // This line was previously here (line 350 in the original snippet)
+    // uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
     uint32_t bytes_per_pixel_in_store = gxm::bits_per_pixel(info.format) / 8;
 
     if (std::max(bytes_per_pixel_requested, bytes_per_pixel_in_store) % std::min(bytes_per_pixel_requested, bytes_per_pixel_in_store) != 0)
@@ -759,25 +766,15 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_depth_stencil_as_tex
         tiling = SurfaceTiling::Tiled;
         stride_samples = align(memory_width, 32);
         break;
-    case SCE_GXM_TEXTURE_LINEAR_STRIDED:
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = gxm::get_stride_in_bytes(texture) / bytes_per_pixel;
-    break;
-case SCE_GXM_TEXTURE_SWIZZLED:
-case SCE_GXM_TEXTURE_CUBE:
-case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
-case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
-    LOG_WARN("Unsupported texture type {} for color surface, treating as linear", static_cast<int>(texture.texture_type()));
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = align(pixel_stride, 8);
-    break;
-default:
-    LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
-    tiling = SurfaceTiling::Linear;
-    pixel_stride = align(pixel_stride, 8);
-    break;
+    case SCE_GXM_TEXTURE_SWIZZLED:
+    case SCE_GXM_TEXTURE_CUBE:
+    case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+    case SCE_GXM_TEXTURE_CUBE_ARBITRARY:
+        // Depth/stencil should never be swizzled, but handle it gracefully
+        LOG_WARN("Unexpected texture type {} for depth/stencil surface", static_cast<int>(texture.texture_type()));
+        return std::nullopt;
     default:
-        // a depth/stencil is never swizzled
+        LOG_ERROR("Unknown texture type: {}", static_cast<int>(texture.texture_type()));
         return std::nullopt;
     }
 
@@ -1198,15 +1195,14 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
         if (!last_written_surface->copy_buffer)
             last_written_surface->copy_buffer = std::make_unique<vkutil::Buffer>();
 
-        vkutil::Buffer &copy_buffer = *last_written_surface->copy_buffer;
-
-        if (!copy_buffer.buffer) {
-            copy_buffer.size = last_written_surface->stride_bytes * last_written_surface->original_height;
-            copy_buffer.init_buffer(vk::BufferUsageFlagBits::eTransferDst, vkutil::vma_mapped_alloc);
+        if (!last_written_surface->copy_buffer->buffer) { // Correctly accesses the 'buffer' member of the vkutil::Buffer object
+            last_written_surface->copy_buffer->size = last_written_surface->stride_bytes * last_written_surface->original_height;
+            last_written_surface->copy_buffer->init_buffer(vk::BufferUsageFlagBits::eTransferDst, vkutil::vma_mapped_alloc);
         }
 
-        buffer = copy_buffer.buffer;
+        buffer = last_written_surface->copy_buffer->buffer; // Correctly accesses the 'buffer' member
         offset = 0;
+
     } else {
         std::tie(buffer, offset) = state.get_matching_mapping(last_written_surface->data);
     }
@@ -1280,6 +1276,23 @@ static void swizzle_text_T(T *pixels, uint32_t nb_pixel, ColorSurfaceCacheInfo *
             // ARGB
             swizzle_text_T_4<T, 2>(pixels, nb_pixel);
             break;
+        case vk::ComponentSwizzle::eR:
+    // RGBA - no swizzle needed
+    break;
+case vk::ComponentSwizzle::eIdentity:
+    // Identity mapping - no swizzle needed
+    break;
+case vk::ComponentSwizzle::eZero:
+    // Component should be zero
+    std::memset(pixels, 0, nb_pixel * sizeof(T));
+    return;
+case vk::ComponentSwizzle::eOne:
+    // Component should be one (max value)
+    std::fill_n(pixels, nb_pixel, std::numeric_limits<T>::max());
+    return;
+default:
+    LOG_ERROR("Unknown swizzle component: {}", static_cast<int>(surface->swizzle.r));
+    break;
         }
     }
 }
