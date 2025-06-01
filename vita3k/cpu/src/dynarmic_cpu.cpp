@@ -342,6 +342,8 @@ int DynarmicCPU::run() {
     if (!halted && !break_ && !exit_request && !parent->svc_called) {
         jit->Step();
         jit->Step();
+        jit->Step();
+        jit->Step();
     }
     
     return halted;
