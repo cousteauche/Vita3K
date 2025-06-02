@@ -34,7 +34,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
 
     // WipEout 2048 Direct 60FPS Override
     if (emuenv.display.fps_hack && 
-        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015" || emuenv.io.title_id == "PCSF00024")) {
         
         // For WipEout, always use immediate return for SetFrameBuf waits
         // This forces the game to run at max framerate
@@ -44,7 +44,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
             
             // Log every 60 skipped frames
             if (skip_count % 60 == 0) {
-                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits", skip_count);
+                LOG_INFO("WipEout Hack 60FPS: Bypassed {} frame waits", skip_count);
             }
             
             // Return immediately without waiting
