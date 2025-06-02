@@ -52,7 +52,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
         }
         
         // For non-SetFrameBuf waits, reduce vcount to minimum
-        vcount = 0;
+        //vcount = 0;
     }
 
     // Original fps_hack code (for other games)

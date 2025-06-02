@@ -18,3 +18,5 @@ compile_commands.json
 # AppImage builder
 appimage/linuxdeploy.AppImage
 /.gdbinit
+/llmops
+.llmops
