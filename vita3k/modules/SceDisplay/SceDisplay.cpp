@@ -56,8 +56,8 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
     }
 
     // Original fps_hack code (for other games)
-    if (emuenv.display.fps_hack && vcount > 1)
-        vcount = 1;
+    //if (emuenv.display.fps_hack && vcount > 1)
+    //    vcount = 1;
 
     uint64_t target_vcount;
     if (is_since_setbuf) {
