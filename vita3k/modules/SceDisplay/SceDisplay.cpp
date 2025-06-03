@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -32,6 +32,10 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
+    // --- FIX FOR ERROR 1: Declare original_vcount when logging it ---
+    int original_vcount = vcount; 
+    // --- END FIX ---
+
     // WipEout 2048 Direct 60FPS Override - Keep original working logic
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
@@ -48,8 +52,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
             }
             
             // Enhanced logging for display_wait
-            // Added explicit cast to `int` for `vcount` in log for consistent type handling
-            LOG_INFO("WipEout display_wait: is_since_setbuf=true, vcount={} (original hack), returning immediately.", static_cast<int>(vcount));
+            LOG_INFO("WipEout display_wait: is_since_setbuf=true, vcount={} (original hack), returning immediately.", static_cast<int>(original_vcount)); // Log original vcount
             
             // Return immediately without waiting (CRITICAL for WipEout's display)
             return SCE_DISPLAY_ERROR_OK;
@@ -57,7 +60,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
         
         // For non-SetFrameBuf waits, reduce vcount to minimum (original working hack)
         vcount = 0;
-        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0, original hack).", static_cast<int>(original_vcount)); // Log original vcount for comparison
+        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0, original hack).", static_cast<int>(original_vcount)); // Log original vcount
     }
 
     // Original fps_hack code (for other games) - This applies if the WipEout-specific hack above didn't activate.
@@ -164,8 +167,9 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
-            // ENHANCED LOGGING: Cast pFrameBuf->base to uintptr_t to resolve compile error
-            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), reinterpret_cast<uintptr_t>(pFrameBuf->base));
+            // --- FIX FOR ERROR 2: Cast Ptr<const void> to void* first, then uintptr_t ---
+            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), reinterpret_cast<uintptr_t>(static_cast<void*>(pFrameBuf->base)));
+            // --- END FIX ---
             last_time = now;
         }
     }
