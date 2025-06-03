@@ -15,18 +15,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-// CRITICAL FIX: Aggressive include reordering - include all standard headers first.
-#include <atomic>
-#include <chrono>
-#include <mutex>
-#include <deque>
-#include <cmath>
-#include <thread>
-#include <algorithm> // For std::min, std::max
+#include "SceDisplay.h" // This is the local header for this .cpp file
 
-// Then project-specific headers
-#include "SceDisplay.h" // Local header
-#include <display/functions.h> // Global 'notify_frame_presented' declaration
+#include <display/functions.h> // This header is where the global 'notify_frame_presented' is declared for other files
 #include <display/state.h>
 #include <io/state.h>
 #include <kernel/state.h>
@@ -36,6 +27,16 @@
 #include <util/types.h>
 
 #include <util/tracy.h>
+
+// CRITICAL FIX: Explicitly and correctly including all required standard library headers.
+// These are essential for std::atomic, std::chrono, std::mutex, std::deque, std::sqrt, and std::this_thread.
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <deque>
+#include <cmath>
+#include <thread>
+#include <algorithm> // For std::min, std::max
 
 
 TRACY_MODULE_NAME(SceDisplay);
