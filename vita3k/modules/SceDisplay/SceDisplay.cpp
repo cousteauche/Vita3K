@@ -509,6 +509,11 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
+EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
+    TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
+    return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
+}
+
 // Removed the duplicate definition of sceDisplayWaitVblankStartMultiCB
 // EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
 //     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
