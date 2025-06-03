@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -32,25 +32,30 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-    // WipEout 2048 Direct 60FPS Override - Super Stable Version
-    // The goal is to force all display waits for WipEout to be for *exactly one* vblank.
-    // This effectively doubles the framerate from 30 FPS (waiting for 2 vblanks) to 60 FPS (waiting for 1 vblank).
-    // It *avoids completely skipping the wait*, which was the cause of instability.
+    // WipEout 2048 Direct 60FPS Override - Hybrid Stability Attempt
     if (emuenv.display.fps_hack &&
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
 
         int original_vcount = vcount; // Store original for logging
 
-        // If the game asks to wait for more than 1 vblank (e.g., 2 for 30 FPS), reduce it to 1.
-        // If the game asks to wait for 0 vblanks (e.g., for menu/busy-loop prevention), ensure it waits for at least 1.
-        // This ensures the game always synchronizes with the display pipeline, but at 60 FPS rate.
-        if (vcount != 1) {
-            vcount = 1;
-        }
+        if (is_since_setbuf) {
+            // For sceDisplayWaitSetFrameBuf calls (frame presentation waits):
+            // We want 60 FPS, so if the game requests waiting for more than 1 vblank,
+            // we reduce it to exactly 1. We must NOT skip the actual wait_vblank call.
+            if (vcount > 1) {
+                vcount = 1;
+            }
+            // If vcount is 0 or 1, we keep it as is. `wait_vblank` will handle 0 appropriately.
+            // This is the primary point where we ensure 60FPS by capping the wait.
 
-        // Log the vcount reduction/adjustment for WipEout for clarity
-        if (original_vcount != vcount) {
-             LOG_INFO("WipEout 60FPS: Adjusted vcount from {} to {} (is_since_setbuf: {})", original_vcount, vcount, is_since_setbuf);
+            LOG_INFO("WipEout 60FPS (SetFrameBuf wait): Adjusted vcount from {} to {}", original_vcount, vcount);
+
+        } else {
+            // For sceDisplayWaitVblankStart calls (general vblank waits):
+            // Reverting to the original "vcount = 0" behavior which seemed to run,
+            // as changing it to 1 might be causing unexpected issues for non-rendering threads.
+            vcount = 0;
+            LOG_INFO("WipEout 60FPS (VblankStart wait): Forced vcount to 0 (was {})", original_vcount);
         }
     }
     // Original fps_hack code (for other games)
@@ -65,15 +70,16 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
     } else {
         // the wait is considered starting from the last time the thread resumed
         // from a vblank wait (sceDisplayWait...) and not from the time this function was called
-        // but we still need to wait at least for one vblank
+        // but we still need to wait at least for one vblank if vcount is 0 for actual sync.
+        // NOTE: How `wait_vblank` handles vcount=0 is critical here.
+        // Usually, vcount=0 means "wait until the *next* vblank start."
         const uint64_t next_vsync = emuenv.display.vblank_count + 1;
         const uint64_t min_vsync = thread->last_vblank_waited + vcount;
         thread->last_vblank_waited = std::max(next_vsync, min_vsync);
         target_vcount = thread->last_vblank_waited;
     }
 
-    // CRITICAL CHANGE: We always call wait_vblank now for WipEout.
-    // The previous unstable hack directly returned here, which caused the issues.
+    // CRITICAL: Always call wait_vblank. Never bypass it.
     wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
 
     if (emuenv.display.abort.load())
@@ -192,7 +198,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     DisplayFrameInfo &info = emuenv.display.sce_frame;
 
     info.base = pFrameBuf->base;
-    info.pitch = info.pitch; // Keep original pitch from input, not an internal field?
+    info.pitch = pFrameBuf->pitch; // Use pFrameBuf->pitch directly
     info.pixelformat = pFrameBuf->pixelformat;
     info.image_size.x = pFrameBuf->width;
     info.image_size.y = pFrameBuf->height;
@@ -225,8 +231,7 @@ EXPORT(int, sceDisplayGetPrimaryHead) {
 
 EXPORT(SceInt32, sceDisplayGetRefreshRate, float *pFps) {
     TRACY_FUNC(sceDisplayGetRefreshRate, pFps);
-    *pFps = 59.94005f; // This is the Vita's native refresh rate, 60Hz.
-                      // The hack influences *game* framerate, not reported hardware refresh rate.
+    *pFps = 59.94005f;
     return 0;
 }
 
@@ -286,20 +291,24 @@ EXPORT(SceInt32, sceDisplayWaitSetFrameBufMultiCB, SceUInt vcount) {
 
 EXPORT(SceInt32, sceDisplayWaitVblankStart) {
     TRACY_FUNC(sceDisplayWaitVblankStart);
+    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, 1, false, false);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartCB) {
     TRACY_FUNC(sceDisplayWaitVblankStartCB);
+    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, 1, false, true);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMulti, vcount);
+    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
+    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
