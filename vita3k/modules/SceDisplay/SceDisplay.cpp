@@ -15,9 +15,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceDisplay.h"
+#include "SceDisplay.h" // This is the local header for this .cpp file
 
-#include <display/functions.h> // Keep this include - it's where the declaration should be
+#include <display/functions.h> // This header is where the global 'notify_frame_presented' is declared for other files
 #include <display/state.h>
 #include <io/state.h>
 #include <kernel/state.h>
@@ -27,15 +27,22 @@
 #include <util/types.h>
 
 #include <util/tracy.h>
+
+// CRITICAL FIX: Explicitly and correctly including all required standard library headers.
+// These are essential for std::atomic, std::chrono, std::mutex, std::deque, std::sqrt, and std::this_thread.
 #include <atomic>
+#include <chrono>
+#include <mutex>
 #include <deque>
 #include <cmath>
-#include <thread> // Added for std::this_thread::sleep_for and std::this_thread::yield
+#include <thread>
+#include <algorithm> // For std::min, std::max (used in adaptive_wait and display_wait)
+
 
 TRACY_MODULE_NAME(SceDisplay);
 
 // Advanced frame pacing system for 60fps patches
-namespace { // This anonymous namespace isolates the FramePacer implementation
+namespace { // This anonymous namespace correctly isolates the FramePacer implementation
     struct FramePacer {
         std::atomic<uint32_t> pending_frames{0};
         std.atomic<uint64_t> total_frames{0};
@@ -206,7 +213,7 @@ namespace { // This anonymous namespace isolates the FramePacer implementation
     // Global pacer instance, accessible within this anonymous namespace
     FramePacer g_wipeout_pacer;
 
-    // Define notify_frame_presented within the anonymous namespace to access g_wipeout_pacer
+    // Define notify_frame_presented_internal within the anonymous namespace to access g_wipeout_pacer
     void notify_frame_presented_internal() {
         g_wipeout_pacer.on_frame_present();
     }
@@ -215,7 +222,8 @@ namespace { // This anonymous namespace isolates the FramePacer implementation
 
 // Expose notify_frame_presented_internal as a global function with external linkage
 // This is what display.cpp will call.
-extern void notify_frame_presented(); // Declare it before defining if needed, but it's defined below
+// This declaration is here because it's the *defining* compilation unit.
+// It needs to match the declaration in display/functions.h
 void notify_frame_presented() {
     // Call the internal version within the anonymous namespace
     notify_frame_presented_internal();
@@ -346,7 +354,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
         frame_count++;
         
         if (frame_count % 60 == 0) {
-            auto now = std::chrono::high_resolution_clock::now();
+            auto now = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
