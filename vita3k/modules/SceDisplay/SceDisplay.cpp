@@ -517,9 +517,9 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
 
-// Renderer callback integration (must be outside module namespace)
-namespace display {
-    void notify_frame_presented() {
-        g_wipeout_pacer.on_frame_present();
-    }
-}
+// // Renderer callback integration (must be outside module namespace)
+// namespace display {
+//     void notify_frame_presented() {
+//         g_wipeout_pacer.on_frame_present();
+//     }
+// }
