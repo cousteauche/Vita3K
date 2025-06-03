@@ -8,20 +8,21 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE. See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <display/functions.h> // This header is where 'notify_frame_presented' will be declared globally
+#include <display/functions.h> // This header should declare 'notify_frame_presented' globally
 
 #include <dialog/state.h>
 #include <display/state.h>
 #include <emuenv/state.h>
 #include <kernel/state.h>
 #include <renderer/state.h>
+#include <io/state.h> // <--- ADDED: Include for IOState full definition
 
 #include <chrono>
 #include <motion/functions.h>
@@ -223,7 +224,7 @@ void update_display(EmuEnvState &emuenv) {
     // The specific calls from your app_init.cpp and renderer.cpp dumps were:
     // emuenv.renderer->render_frame(...);
     // emuenv.renderer->swap_window(...);
-    emuenv.renderer->render_frame(emuenv.display.viewport_pos, emuenv.display.viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
+    emuenv.renderer->render_frame(emuenv.logical_viewport_pos, emuenv.logical_viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
     
     // Call the renderer to swap the front and back buffers, displaying the new frame on screen;
     // This is the point where the frame is effectively "presented" to the user.
