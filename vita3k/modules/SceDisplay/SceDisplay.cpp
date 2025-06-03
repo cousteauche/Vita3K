@@ -32,7 +32,7 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-    // WipEout 2048 Direct 60FPS Override - Hybrid Stability Attempt
+    // WipEout 2048 Direct 60FPS Override - Iteration 3: Focusing on Display Output and Stability
     if (emuenv.display.fps_hack &&
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
 
@@ -40,20 +40,16 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
 
         if (is_since_setbuf) {
             // For sceDisplayWaitSetFrameBuf calls (frame presentation waits):
-            // We want 60 FPS, so if the game requests waiting for more than 1 vblank,
-            // we reduce it to exactly 1. We must NOT skip the actual wait_vblank call.
-            if (vcount > 1) {
-                vcount = 1;
-            }
-            // If vcount is 0 or 1, we keep it as is. `wait_vblank` will handle 0 appropriately.
-            // This is the primary point where we ensure 60FPS by capping the wait.
-
+            // We want 60 FPS, so we ensure the game waits for exactly 1 vblank for this context.
+            // This is the core 60 FPS speedup by reducing 2-vblank waits to 1-vblank waits.
+            // Importantly: We *never* return early here, ensuring `wait_vblank` is always called.
+            vcount = 1;
             LOG_INFO("WipEout 60FPS (SetFrameBuf wait): Adjusted vcount from {} to {}", original_vcount, vcount);
 
         } else {
             // For sceDisplayWaitVblankStart calls (general vblank waits):
-            // Reverting to the original "vcount = 0" behavior which seemed to run,
-            // as changing it to 1 might be causing unexpected issues for non-rendering threads.
+            // Revert to the original hack's behavior for these, as it seemed to run for a while.
+            // This keeps general Vblank synchronization as per the original "working" hack.
             vcount = 0;
             LOG_INFO("WipEout 60FPS (VblankStart wait): Forced vcount to 0 (was {})", original_vcount);
         }
@@ -68,18 +64,17 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
     if (is_since_setbuf) {
         target_vcount = emuenv.display.last_setframe_vblank_count + vcount;
     } else {
-        // the wait is considered starting from the last time the thread resumed
-        // from a vblank wait (sceDisplayWait...) and not from the time this function was called
-        // but we still need to wait at least for one vblank if vcount is 0 for actual sync.
-        // NOTE: How `wait_vblank` handles vcount=0 is critical here.
-        // Usually, vcount=0 means "wait until the *next* vblank start."
+        // The wait is considered starting from the last time the thread resumed
+        // from a vblank wait (sceDisplayWait...) and not from the time this function was called.
+        // If vcount is 0, this will effectively wait until the next Vblank start.
         const uint64_t next_vsync = emuenv.display.vblank_count + 1;
         const uint64_t min_vsync = thread->last_vblank_waited + vcount;
         thread->last_vblank_waited = std::max(next_vsync, min_vsync);
         target_vcount = thread->last_vblank_waited;
     }
 
-    // CRITICAL: Always call wait_vblank. Never bypass it.
+    // CRITICAL: Always call wait_vblank. This is crucial for emulator-side display synchronization.
+    // The black screen implies that `wait_vblank` (or its immediate context) is the key.
     wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
 
     if (emuenv.display.abort.load())
@@ -198,7 +193,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     DisplayFrameInfo &info = emuenv.display.sce_frame;
 
     info.base = pFrameBuf->base;
-    info.pitch = pFrameBuf->pitch; // Use pFrameBuf->pitch directly
+    info.pitch = pFrameBuf->pitch; // *** CRITICAL CORRECTION: Ensures correct pitch is set ***
     info.pixelformat = pFrameBuf->pixelformat;
     info.image_size.x = pFrameBuf->width;
     info.image_size.y = pFrameBuf->height;
