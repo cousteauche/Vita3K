@@ -48,7 +48,8 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
             }
             
             // Enhanced logging for display_wait
-            LOG_INFO("WipEout display_wait: is_since_setbuf=true, vcount={}, returning immediately.", vcount);
+            // Added explicit cast to `int` for `vcount` in log for consistent type handling
+            LOG_INFO("WipEout display_wait: is_since_setbuf=true, vcount={} (original hack), returning immediately.", static_cast<int>(vcount));
             
             // Return immediately without waiting (CRITICAL for WipEout's display)
             return SCE_DISPLAY_ERROR_OK;
@@ -56,7 +57,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
         
         // For non-SetFrameBuf waits, reduce vcount to minimum (original working hack)
         vcount = 0;
-        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0).", vcount);
+        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0, original hack).", static_cast<int>(original_vcount)); // Log original vcount for comparison
     }
 
     // Original fps_hack code (for other games) - This applies if the WipEout-specific hack above didn't activate.
@@ -163,8 +164,8 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
-            // ENHANCED LOGGING: Add pFrameBuf->base address here
-            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), pFrameBuf->base);
+            // ENHANCED LOGGING: Cast pFrameBuf->base to uintptr_t to resolve compile error
+            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), reinterpret_cast<uintptr_t>(pFrameBuf->base));
             last_time = now;
         }
     }
