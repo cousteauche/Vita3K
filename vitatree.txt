@@ -1,0 +1,1038 @@
+vita3k/
+├── app
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── app
+│   │       ├── discord.h
+│   │       └── functions.h
+│   └── src
+│       ├── app.cpp
+│       ├── app_init.cpp
+│       └── discord.cpp
+├── audio
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── audio
+│   │       ├── impl
+│   │       │   ├── cubeb_audio.h
+│   │       │   └── sdl_audio.h
+│   │       └── state.h
+│   └── src
+│       ├── audio.cpp
+│       └── impl
+│           ├── cubeb_audio.cpp
+│           └── sdl_audio.cpp
+├── CMakeLists.txt
+├── codec
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── codec
+│   │       ├── state.h
+│   │       └── types.h
+│   └── src
+│       ├── aac.cpp
+│       ├── atrac9.cpp
+│       ├── decoder.cpp
+│       ├── h264.cpp
+│       ├── mjpeg.cpp
+│       ├── mp3.cpp
+│       ├── pcm.cpp
+│       └── player.cpp
+├── compat
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── compat
+│   │       ├── functions.h
+│   │       └── state.h
+│   └── src
+│       └── compat.cpp
+├── config
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── config
+│   │       ├── config.h
+│   │       ├── functions.h
+│   │       ├── state.h
+│   │       └── version.h
+│   └── src
+│       ├── config.cpp
+│       └── version.cpp.in
+├── cpu
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── cpu
+│   │       ├── common.h
+│   │       ├── disasm
+│   │       │   ├── functions.h
+│   │       │   └── state.h
+│   │       ├── functions.h
+│   │       ├── impl
+│   │       │   ├── dynarmic_cpu.h
+│   │       │   ├── interface.h
+│   │       │   └── unicorn_cpu.h
+│   │       └── state.h
+│   └── src
+│       ├── cpu.cpp
+│       ├── disasm.cpp
+│       ├── dynarmic_cpu.cpp
+│       └── unicorn_cpu.cpp
+├── ctrl
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── ctrl
+│   │       ├── ctrl.h
+│   │       ├── functions.h
+│   │       └── state.h
+│   └── src
+│       └── ctrl.cpp
+├── dialog
+│   ├── CMakeLists.txt
+│   └── include
+│       └── dialog
+│           ├── state.h
+│           └── types.h
+├── dir_doc.cpp
+├── display
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── display
+│   │       ├── functions.h
+│   │       └── state.h
+│   └── src
+│       └── display.cpp
+├── emuenv
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── emuenv
+│   │       ├── app_util.h
+│   │       ├── state.h
+│   │       └── window.h
+│   └── src
+│       └── emuenv.cpp
+├── features
+│   ├── CMakeLists.txt
+│   └── include
+│       └── features
+│           └── state.h
+├── gdbstub
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── gdbstub
+│   │       ├── functions.h
+│   │       └── state.h
+│   └── src
+│       └── gdb.cpp
+├── glutil
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── glutil
+│   │       ├── gl.h
+│   │       ├── object_array.h
+│   │       ├── object.h
+│   │       └── shader.h
+│   └── src
+│       ├── object.cpp
+│       └── shader.cpp
+├── gui
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── gui
+│   │       ├── functions.h
+│   │       ├── imgui_impl_sdl_gl3.h
+│   │       ├── imgui_impl_sdl.h
+│   │       ├── imgui_impl_sdl_state.h
+│   │       ├── imgui_impl_sdl_vulkan.h
+│   │       └── state.h
+│   └── src
+│       ├── about_dialog.cpp
+│       ├── allocations_dialog.cpp
+│       ├── app_context_menu.cpp
+│       ├── archive_install_dialog.cpp
+│       ├── common_dialog.cpp
+│       ├── compile_shaders.cpp
+│       ├── condvars_dialog.cpp
+│       ├── content_manager.cpp
+│       ├── controllers_dialog.cpp
+│       ├── controls_dialog.cpp
+│       ├── disassembly_dialog.cpp
+│       ├── eventflags_dialog.cpp
+│       ├── firmware_install_dialog.cpp
+│       ├── gui.cpp
+│       ├── home_screen.cpp
+│       ├── ime.cpp
+│       ├── imgui_impl_sdl.cpp
+│       ├── imgui_impl_sdl_gl3.cpp
+│       ├── imgui_impl_sdl_vulkan.cpp
+│       ├── information_bar.cpp
+│       ├── initial_setup.cpp
+│       ├── license_install_dialog.cpp
+│       ├── live_area.cpp
+│       ├── main_menubar.cpp
+│       ├── manual.cpp
+│       ├── mutexes_dialog.cpp
+│       ├── perf_overlay.cpp
+│       ├── pkg_install_dialog.cpp
+│       ├── private.h
+│       ├── reinstall.cpp
+│       ├── semaphores_dialog.cpp
+│       ├── settings.cpp
+│       ├── settings_dialog.cpp
+│       ├── themes.cpp
+│       ├── threads_dialog.cpp
+│       ├── trophy_collection.cpp
+│       ├── trophy_unlocked.cpp
+│       ├── user_management.cpp
+│       ├── vita3k_update.cpp
+│       └── welcome_dialog.cpp
+├── gxm
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── gxm
+│   │       ├── functions.h
+│   │       ├── state.h
+│   │       └── types.h
+│   └── src
+│       ├── attributes.cpp
+│       ├── color.cpp
+│       ├── gxp.cpp
+│       ├── stream.cpp
+│       ├── textures.cpp
+│       └── transfer.cpp
+├── host
+│   ├── CMakeLists.txt
+│   └── dialog
+│       ├── CMakeLists.txt
+│       ├── include
+│       │   └── host
+│       │       └── dialog
+│       │           └── filesystem.h
+│       └── src
+│           └── filesystem.cpp
+├── http
+│   ├── CMakeLists.txt
+│   └── include
+│       └── http
+│           └── state.h
+├── ime
+│   ├── CMakeLists.txt
+│   └── include
+│       └── ime
+│           ├── functions.h
+│           ├── state.h
+│           └── types.h
+├── interface.cpp
+├── interface.h
+├── io
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── io
+│   │       ├── device.h
+│   │       ├── file.h
+│   │       ├── filesystem.h
+│   │       ├── functions.h
+│   │       ├── io.h
+│   │       ├── state.h
+│   │       ├── types.h
+│   │       ├── util.h
+│   │       ├── vfs.h
+│   │       └── VitaIoDevice.h
+│   └── src
+│       ├── device.cpp
+│       ├── file.cpp
+│       ├── filesystem.cpp
+│       ├── io.cpp
+│       └── state_functions.cpp
+├── kernel
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── kernel
+│   │       ├── callback.h
+│   │       ├── cpu_protocol.h
+│   │       ├── debugger.h
+│   │       ├── load_self.h
+│   │       ├── object_store.h
+│   │       ├── relocation.h
+│   │       ├── state.h
+│   │       ├── sync_primitives.h
+│   │       ├── thread
+│   │       │   ├── thread_data_queue.h
+│   │       │   └── thread_state.h
+│   │       └── types.h
+│   └── src
+│       ├── callback.cpp
+│       ├── cpu_protocol.cpp
+│       ├── debugger.cpp
+│       ├── kernel.cpp
+│       ├── load_self.cpp
+│       ├── relocation.cpp
+│       ├── sync_primitives.cpp
+│       └── thread.cpp
+├── lang
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── lang
+│   │       ├── functions.h
+│   │       └── state.h
+│   └── src
+│       └── lang.cpp
+├── main.cpp
+├── mem
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── mem
+│   │       ├── allocator.h
+│   │       ├── atomic.h
+│   │       ├── block.h
+│   │       ├── functions.h
+│   │       ├── mempool.h
+│   │       ├── ptr.h
+│   │       ├── state.h
+│   │       └── util.h
+│   ├── src
+│   │   ├── allocator.cpp
+│   │   └── mem.cpp
+│   └── tests
+│       └── allocator_tests.cpp
+├── module
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── module
+│   │       ├── args_layout.h
+│   │       ├── bridge.h
+│   │       ├── bridge_types.h
+│   │       ├── lay_out_args.h
+│   │       ├── load_module.h
+│   │       ├── module.h
+│   │       ├── read_arg.h
+│   │       ├── vargs.h
+│   │       └── write_return_value.h
+│   ├── src
+│   │   ├── load_module.cpp
+│   │   ├── read_arg.cpp
+│   │   └── write_return_value.cpp
+│   └── tests
+│       └── arg_layout_tests.cpp
+├── modules
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── modules
+│   │       ├── library_init_list.inc
+│   │       └── module_parent.h
+│   ├── module_parent.cpp
+│   ├── SceAppMgr
+│   │   ├── SceAppMgr.cpp
+│   │   ├── SceAppMgr.h
+│   │   └── SceSharedFb.cpp
+│   ├── SceAppUtil
+│   │   ├── SceAppUtilAddcontForce.cpp
+│   │   ├── SceAppUtilBook.cpp
+│   │   ├── SceAppUtilCache.cpp
+│   │   ├── SceAppUtil.cpp
+│   │   └── SceAppUtilExt.cpp
+│   ├── SceAtrac
+│   │   └── SceAtrac.cpp
+│   ├── SceAudio
+│   │   └── SceAudio.cpp
+│   ├── SceAudiodec
+│   │   ├── SceAudiodecUser.cpp
+│   │   └── SceAudiodecUser.h
+│   ├── SceAudioenc
+│   │   └── SceAudioencUser.cpp
+│   ├── SceAudioIn
+│   │   └── SceAudioIn.cpp
+│   ├── SceAvcodec
+│   │   └── SceAvcodec.cpp
+│   ├── SceAvcodecUser
+│   │   └── SceVideoencUser.cpp
+│   ├── SceAVConfig
+│   │   └── SceAVConfig.cpp
+│   ├── SceAvPlayer
+│   │   └── SceAvPlayer.cpp
+│   ├── SceBbmc
+│   │   └── SceBbmc.cpp
+│   ├── SceBgAppUtil
+│   │   └── SceBgAppUtil.cpp
+│   ├── SceBt
+│   │   └── SceBt.cpp
+│   ├── SceCamera
+│   │   └── SceCamera.cpp
+│   ├── SceClipboard
+│   │   └── SceClipboard.cpp
+│   ├── SceCodecEngine
+│   │   └── SceCodecEngineUser.cpp
+│   ├── SceCodecEnginePerf
+│   │   └── SceCodecEnginePerf.cpp
+│   ├── SceCodecEngineWrapper
+│   │   └── SceCodecEngineWrapper.cpp
+│   ├── SceCommonDialog
+│   │   ├── SceCommonDialog.cpp
+│   │   └── SceNpWebApiCommonDialog.cpp
+│   ├── SceCompat
+│   │   └── SceCompat.cpp
+│   ├── SceCoredump
+│   │   ├── SceCoredump.cpp
+│   │   └── SceCoredumpNounlink.cpp
+│   ├── SceCtrl
+│   │   └── SceCtrl.cpp
+│   ├── SceDeci4p
+│   │   └── SceDeci4pUserp.cpp
+│   ├── SceDeci4pUserp
+│   │   └── SceDeci4pUserp.cpp
+│   ├── SceDisplay
+│   │   ├── SceDisplay.cpp
+│   │   └── SceDisplay.h
+│   ├── SceDriverUser
+│   │   ├── SceAppMgrUser.cpp
+│   │   ├── SceAppMgrUser.h
+│   │   ├── SceDisplayUser.cpp
+│   │   ├── SceDrmBridgeUser.cpp
+│   │   ├── SceErrorUser.cpp
+│   │   ├── SceFios2User.cpp
+│   │   ├── SceMotion.cpp
+│   │   └── SceRtcUser.cpp
+│   ├── SceDTrace
+│   │   └── SceDTrace.cpp
+│   ├── SceError
+│   │   ├── SceError.cpp
+│   │   └── SceError.h
+│   ├── SceFace
+│   │   └── SceFace.cpp
+│   ├── SceFiber
+│   │   └── SceFiber.cpp
+│   ├── SceFios2
+│   │   └── SceFios2.cpp
+│   ├── SceFios2Kernel
+│   │   ├── SceFios2Kernel02.cpp
+│   │   ├── SceFios2Kernel.cpp
+│   │   └── SceFios2KernelForDriver.cpp
+│   ├── SceGameUpdate
+│   │   └── SceGameUpdate.cpp
+│   ├── SceGps
+│   │   └── SceGps.cpp
+│   ├── SceGpuEs4
+│   │   └── SceGpuEs4ForUser.cpp
+│   ├── SceGxm
+│   │   ├── SceGxm.cpp
+│   │   ├── SceGxm.h
+│   │   ├── SceGxmInternal.cpp
+│   │   ├── SceGxmInternalForGles.cpp
+│   │   ├── SceGxmInternalForReplay.cpp
+│   │   └── SceGxmInternalForVsh.cpp
+│   ├── SceHandwriting
+│   │   └── SceHandwriting.cpp
+│   ├── SceHid
+│   │   └── SceHid.cpp
+│   ├── SceHttp
+│   │   └── SceHttp.cpp
+│   ├── SceIme
+│   │   └── SceIme.cpp
+│   ├── SceIncomingDialog
+│   │   └── SceIncomingDialog.cpp
+│   ├── SceIofilemgr
+│   │   ├── SceIofilemgr.cpp
+│   │   └── SceIofilemgr.h
+│   ├── SceIpmi
+│   │   └── SceIpmi.cpp
+│   ├── SceJpeg
+│   │   └── SceJpegUser.cpp
+│   ├── SceJpegArm
+│   │   └── SceJpegArm.cpp
+│   ├── SceJpegEnc
+│   │   └── SceJpegEncUser.cpp
+│   ├── SceJpegEncArm
+│   │   └── SceJpegEncArm.cpp
+│   ├── SceKernelDmacMgr
+│   │   └── SceDmacmgr.cpp
+│   ├── SceKernelModulemgr
+│   │   ├── SceBacktrace.cpp
+│   │   ├── SceModulemgr.cpp
+│   │   └── SceModulemgr.h
+│   ├── SceKernelThreadMgr
+│   │   ├── SceThreadmgrCoredumpTime.cpp
+│   │   ├── SceThreadmgr.cpp
+│   │   ├── SceThreadmgrForDriver.cpp
+│   │   ├── SceThreadmgrForKernel.cpp
+│   │   └── SceThreadmgr.h
+│   ├── SceLibc
+│   │   ├── SceLibc.cpp
+│   │   ├── SceLibm.cpp
+│   │   └── SceLibstdcxx.cpp
+│   ├── SceLibDbg
+│   │   └── SceDbg.cpp
+│   ├── SceLibft2
+│   │   └── SceFt2.cpp
+│   ├── SceLibJson
+│   │   └── SceLibJson.cpp
+│   ├── SceLibKernel
+│   │   ├── SceKernelForMono.cpp
+│   │   ├── SceKernelForVM.cpp
+│   │   ├── SceLibGcc.cpp
+│   │   ├── SceLibKernel.cpp
+│   │   ├── SceLibKernel.h
+│   │   ├── SceLibRng.cpp
+│   │   ├── SceLibSsp.cpp
+│   │   └── SceRtabi.cpp
+│   ├── SceLibMono
+│   │   └── SceLibMono.cpp
+│   ├── SceLibMonoBridge
+│   │   └── SceLibMonoBridge.cpp
+│   ├── SceLibMp4Recorder
+│   │   └── SceLibMp4Recorder.cpp
+│   ├── SceLibMtp
+│   │   └── SceLibMtp.cpp
+│   ├── SceLibXml
+│   │   └── SceLibXml.cpp
+│   ├── SceLiveArea
+│   │   └── SceLiveAreaUtil.cpp
+│   ├── SceLocation
+│   │   └── SceLibLocation.cpp
+│   ├── SceLocationExtension
+│   │   └── SceLibLocationExtension.cpp
+│   ├── SceLsdb
+│   │   └── SceLsdb.cpp
+│   ├── SceMotionDev
+│   │   └── SceMotionDev.cpp
+│   ├── SceMp4
+│   │   └── SceMp4.cpp
+│   ├── SceMtpIfDriver
+│   │   └── SceMtpIf.cpp
+│   ├── SceMusicExport
+│   │   └── SceMusicExport.cpp
+│   ├── SceNearDialogUtil
+│   │   └── SceNearDialogUtil.cpp
+│   ├── SceNearUtil
+│   │   └── SceNearUtil.cpp
+│   ├── SceNet
+│   │   ├── SceNet.cpp
+│   │   └── SceNet.h
+│   ├── SceNetAdhocMatching
+│   │   └── SceNetAdhocMatching.cpp
+│   ├── SceNetCtl
+│   │   └── SceNetCtl.cpp
+│   ├── SceNetInternal
+│   │   └── SceNetInternal.cpp
+│   ├── SceNetPs
+│   │   └── SceNetPsForSyscalls.cpp
+│   ├── SceNgs
+│   │   └── SceNgsInternal.cpp
+│   ├── SceNgsUser
+│   │   └── SceNgs.cpp
+│   ├── SceNotificationUtil
+│   │   ├── SceNotificationUtilBgApp.cpp
+│   │   ├── SceNotificationUtil.cpp
+│   │   └── SceNotificationUtilProgress.cpp
+│   ├── SceNpActivity
+│   │   └── SceNpActivity.cpp
+│   ├── SceNpBasic
+│   │   └── SceNpBasic.cpp
+│   ├── SceNpCommerce2
+│   │   └── SceNpCommerce2.cpp
+│   ├── SceNpCommon
+│   │   └── SceNpCommon.cpp
+│   ├── SceNpDrm
+│   │   ├── SceNpDrm.cpp
+│   │   ├── SceNpDrmPackage.cpp
+│   │   └── ScePsmDrm.cpp
+│   ├── SceNpManager
+│   │   └── SceNpManager.cpp
+│   ├── SceNpMatching2
+│   │   └── SceNpMatching2.cpp
+│   ├── SceNpMessage
+│   │   └── SceNpMessage.cpp
+│   ├── SceNpParty
+│   │   └── SceNpPartyGameUtil.cpp
+│   ├── SceNpScore
+│   │   └── SceNpScore.cpp
+│   ├── SceNpSignaling
+│   │   └── SceNpSignaling.cpp
+│   ├── SceNpSnsFacebook
+│   │   └── SceNpSnsFacebook.cpp
+│   ├── SceNpTrophy
+│   │   └── SceNpTrophy.cpp
+│   ├── SceNpTus
+│   │   └── SceNpTus.cpp
+│   ├── SceNpUtility
+│   │   └── SceNpUtility.cpp
+│   ├── SceNpWebApi
+│   │   └── SceNpWebApi.cpp
+│   ├── ScePaf
+│   │   ├── ScePafMisc.cpp
+│   │   ├── ScePafResource.cpp
+│   │   ├── ScePafStdc.cpp
+│   │   └── ScePafWidget.cpp
+│   ├── ScePamgr
+│   │   └── ScePamgr.cpp
+│   ├── ScePerf
+│   │   └── ScePerf.cpp
+│   ├── ScePgf
+│   │   └── ScePgf.cpp
+│   ├── ScePhotoExport
+│   │   └── ScePhotoExport.cpp
+│   ├── ScePower
+│   │   └── ScePower.cpp
+│   ├── SceProcessmgr
+│   │   ├── SceProcessmgr.cpp
+│   │   ├── SceProcessmgrForDriver.cpp
+│   │   └── SceProcessmgr.h
+│   ├── ScePromoterUtil
+│   │   └── ScePromoterUtil.cpp
+│   ├── ScePspnetAdhoc
+│   │   └── ScePspnetAdhoc.cpp
+│   ├── ScePvf
+│   │   └── ScePvf.cpp
+│   ├── SceRazorCapture
+│   │   └── SceRazorCapture.cpp
+│   ├── SceRazorHud
+│   │   └── SceRazorHud.cpp
+│   ├── SceRegistryMgr
+│   │   ├── SceRegMgr.cpp
+│   │   ├── SceRegMgrForGame.cpp
+│   │   ├── SceRegMgrForSDK.cpp
+│   │   └── SceRegMgrService.cpp
+│   ├── SceRtc
+│   │   ├── SceRtc.cpp
+│   │   ├── SceRtcForDriver.cpp
+│   │   └── SceRtc.h
+│   ├── SceRudp
+│   │   └── SceLibRudp.cpp
+│   ├── SceSas
+│   │   └── SceSas.cpp
+│   ├── SceSblACMgr
+│   │   └── SceSblACMgr.cpp
+│   ├── SceSblGcAuthMgr
+│   │   └── SceSblGcAuthMgr.cpp
+│   ├── SceSblPostSsMgr
+│   │   ├── SceSblLicMgr.cpp
+│   │   ├── SceSblPmMgr.cpp
+│   │   ├── SceSblRtcMgr.cpp
+│   │   └── SceSblUtMgr.cpp
+│   ├── SceSblSsMgr
+│   │   ├── SceSblAimgr.cpp
+│   │   ├── SceSblDmac5Mgr.cpp
+│   │   ├── SceSblQafMgr.cpp
+│   │   └── SceSblRng.cpp
+│   ├── SceSblUpdateMgr
+│   │   └── SceSblSsUpdateMgr.cpp
+│   ├── SceScreenShot
+│   │   └── SceScreenShot.cpp
+│   ├── SceShaccCg
+│   │   └── SceShaccCg.cpp
+│   ├── SceShellSvc
+│   │   ├── SceShellSvc.cpp
+│   │   ├── SceShellUtil.cpp
+│   │   └── SceShellUtilLaunchApp.cpp
+│   ├── SceShutterSound
+│   │   └── SceShutterSound.cpp
+│   ├── SceSmart
+│   │   └── SceSmart.cpp
+│   ├── SceSqlite
+│   │   └── SceSqlite.cpp
+│   ├── SceSsl
+│   │   ├── SceSsl.cpp
+│   │   └── SceSslInternal.cpp
+│   ├── SceStdio
+│   │   └── SceStdio.cpp
+│   ├── SceSulpha
+│   │   └── SceSulpha.cpp
+│   ├── SceSysmem
+│   │   ├── SceCpu.cpp
+│   │   ├── SceCpuForDriver.cpp
+│   │   ├── SceDebugForDriver.cpp
+│   │   ├── SceDebugLed.cpp
+│   │   ├── SceDipsw.cpp
+│   │   ├── SceDipswForDriver.cpp
+│   │   ├── SceProcEventForDriver.cpp
+│   │   ├── SceSysclibForDriver.cpp
+│   │   ├── SceSysmem.cpp
+│   │   ├── SceSysmemForDriver.cpp
+│   │   └── SceSysmem.h
+│   ├── SceSysmodule
+│   │   └── SceSysmodule.cpp
+│   ├── SceSystemGesture
+│   │   └── SceSystemGesture.cpp
+│   ├── SceTeleportClient
+│   │   └── SceTeleportClient.cpp
+│   ├── SceTeleportServer
+│   │   └── SceTeleportServer.cpp
+│   ├── SceTouch
+│   │   └── SceTouch.cpp
+│   ├── SceTriggerUtil
+│   │   └── SceTriggerUtil.cpp
+│   ├── SceUdcd
+│   │   └── SceUdcd.cpp
+│   ├── SceUlobjDbg
+│   │   └── SceUlobjDbg.cpp
+│   ├── SceUlobjMgr
+│   │   └── SceUlobjMgr.cpp
+│   ├── SceUlt
+│   │   └── SceUlt.cpp
+│   ├── SceUsbd
+│   │   └── SceUsbdForUser.cpp
+│   ├── SceUsbPspcm
+│   │   └── SceUsbPspcm.cpp
+│   ├── SceUsbSerial
+│   │   └── SceUsbSerial.cpp
+│   ├── SceUsbServ
+│   │   └── SceUsbServ.cpp
+│   ├── SceUsbstorVStorDriver
+│   │   └── SceUsbstorVStor.cpp
+│   ├── SceVideodec
+│   │   └── SceVideodecUser.cpp
+│   ├── SceVideoExport
+│   │   └── SceVideoExport.cpp
+│   ├── SceVoice
+│   │   └── SceVoice.cpp
+│   ├── SceVoiceQoS
+│   │   └── SceVoiceQoS.cpp
+│   ├── SceVshBridge
+│   │   ├── SceDrmBridge.cpp
+│   │   └── SceVshBridge.cpp
+│   └── SceWlanBt
+│       └── SceWlan.cpp
+├── motion
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── motion
+│   │       ├── functions.h
+│   │       ├── motion.h
+│   │       ├── motion_input.h
+│   │       └── state.h
+│   └── src
+│       ├── motion.cpp
+│       └── motion_input.cpp
+├── net
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── net
+│   │       ├── epoll.h
+│   │       ├── functions.h
+│   │       ├── socket.h
+│   │       ├── state.h
+│   │       └── types.h
+│   └── src
+│       ├── epoll.cpp
+│       ├── p2psocket.cpp
+│       └── posixsocket.cpp
+├── ngs
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── ngs
+│   │       ├── common.h
+│   │       ├── modules
+│   │       │   ├── atrac9.h
+│   │       │   ├── compressor.h
+│   │       │   ├── delay.h
+│   │       │   ├── distortion.h
+│   │       │   ├── envelope.h
+│   │       │   ├── equalizer.h
+│   │       │   ├── filter.h
+│   │       │   ├── generator.h
+│   │       │   ├── mixer.h
+│   │       │   ├── output.h
+│   │       │   ├── pauser.h
+│   │       │   ├── pitchshift.h
+│   │       │   ├── player.h
+│   │       │   └── reverb.h
+│   │       ├── scheduler.h
+│   │       ├── state.h
+│   │       ├── system.h
+│   │       └── types.h
+│   └── src
+│       ├── definitions.cpp
+│       ├── modules
+│       │   ├── atrac9.cpp
+│       │   ├── compressor.cpp
+│       │   ├── delay.cpp
+│       │   ├── distortion.cpp
+│       │   ├── envelope.cpp
+│       │   ├── equalizer.cpp
+│       │   ├── filter.cpp
+│       │   ├── generator.cpp
+│       │   ├── mixer.cpp
+│       │   ├── output.cpp
+│       │   ├── pauser.cpp
+│       │   ├── pitchshift.cpp
+│       │   ├── player.cpp
+│       │   └── reverb.cpp
+│       ├── ngs.cpp
+│       ├── route.cpp
+│       └── scheduler.cpp
+├── nids
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── nids
+│   │       ├── functions.h
+│   │       ├── nids.inc
+│   │       └── types.h
+│   └── src
+│       └── nids.cpp
+├── np
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── np
+│   │       ├── common.h
+│   │       ├── functions.h
+│   │       ├── state.h
+│   │       └── trophy
+│   │           ├── context.h
+│   │           └── trp_parser.h
+│   └── src
+│       ├── init.cpp
+│       └── trophy
+│           ├── context.cpp
+│           └── trp_parser.cpp
+├── packages
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── packages
+│   │       ├── exfat.h
+│   │       ├── functions.h
+│   │       ├── license.h
+│   │       ├── pkg.h
+│   │       ├── sce_types.h
+│   │       └── sfo.h
+│   └── src
+│       ├── exfat.cpp
+│       ├── license.cpp
+│       ├── pkg.cpp
+│       ├── pup.cpp
+│       ├── sce_utils.cpp
+│       └── sfo.cpp
+├── patch
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── patch
+│   │       └── patch.h
+│   └── src
+│       └── patch.cpp
+├── performance.cpp
+├── regmgr
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── regmgr
+│   │       ├── functions.h
+│   │       ├── state.h
+│   │       └── types.h
+│   └── src
+│       └── regmgr.cpp
+├── renderer
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── renderer
+│   │       ├── commands.h
+│   │       ├── driver_functions.h
+│   │       ├── functions.h
+│   │       ├── gl
+│   │       │   ├── fence.h
+│   │       │   ├── functions.h
+│   │       │   ├── ring_buffer.h
+│   │       │   ├── screen_render.h
+│   │       │   ├── state.h
+│   │       │   ├── surface_cache.h
+│   │       │   └── types.h
+│   │       ├── gxm_types.h
+│   │       ├── profile.h
+│   │       ├── pvrt-dec.h
+│   │       ├── shaders.h
+│   │       ├── state.h
+│   │       ├── texture_cache.h
+│   │       ├── types.h
+│   │       └── vulkan
+│   │           ├── functions.h
+│   │           ├── gxm_to_vulkan.h
+│   │           ├── pipeline_cache.h
+│   │           ├── screen_filters.h
+│   │           ├── screen_renderer.h
+│   │           ├── state.h
+│   │           ├── surface_cache.h
+│   │           └── types.h
+│   └── src
+│       ├── batch.cpp
+│       ├── creation.cpp
+│       ├── gl
+│       │   ├── attribute_formats.cpp
+│       │   ├── color_formats.cpp
+│       │   ├── compile_program.cpp
+│       │   ├── draw.cpp
+│       │   ├── fence.cpp
+│       │   ├── renderer.cpp
+│       │   ├── ring_buffer.cpp
+│       │   ├── screen_render.cpp
+│       │   ├── surface_cache.cpp
+│       │   ├── sync_state.cpp
+│       │   ├── texture.cpp
+│       │   ├── texture_formats.cpp
+│       │   └── uniforms.cpp
+│       ├── renderer.cpp
+│       ├── scene.cpp
+│       ├── shaders.cpp
+│       ├── state_set.cpp
+│       ├── sync.cpp
+│       ├── texture
+│       │   ├── cache.cpp
+│       │   ├── format.cpp
+│       │   ├── palette.cpp
+│       │   ├── pvrt-dec.cpp
+│       │   ├── replacement.cpp
+│       │   └── yuv.cpp
+│       ├── transfer.cpp
+│       └── vulkan
+│           ├── allocator.cpp
+│           ├── context.cpp
+│           ├── creation.cpp
+│           ├── gxm_to_vulkan.cpp
+│           ├── pipeline_cache.cpp
+│           ├── renderer.cpp
+│           ├── scene.cpp
+│           ├── screen_filters.cpp
+│           ├── screen_renderer.cpp
+│           ├── surface_cache.cpp
+│           ├── sync_state.cpp
+│           └── texture.cpp
+├── resource.h
+├── rtc
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── rtc
+│   │       └── rtc.h
+│   └── src
+│       └── rtc.cpp
+├── script
+│   ├── update-linux.sh
+│   ├── update-macos.sh
+│   └── update-windows.bat
+├── shader
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── shader
+│   │       ├── decoder_detail.h
+│   │       ├── gxp_parser.h
+│   │       ├── matcher.h
+│   │       ├── profile.h
+│   │       ├── spirv_recompiler.h
+│   │       ├── types_imm.h
+│   │       ├── uniform_block.h
+│   │       ├── usse_constant_table.h
+│   │       ├── usse_decoder_helpers.h
+│   │       ├── usse_disasm.h
+│   │       ├── usse_opcodes.inc
+│   │       ├── usse_program_analyzer.h
+│   │       ├── usse_translator_entry.h
+│   │       ├── usse_translator.h
+│   │       ├── usse_translator_types.h
+│   │       ├── usse_types.h
+│   │       └── usse_utilities.h
+│   └── src
+│       ├── gxp_parser.cpp
+│       ├── spirv_recompiler.cpp
+│       ├── translator
+│       │   ├── alu.cpp
+│       │   ├── branch_cond.cpp
+│       │   ├── data.cpp
+│       │   ├── ialu.cpp
+│       │   ├── illegal.cpp
+│       │   ├── special.cpp
+│       │   ├── texture.cpp
+│       │   └── utils.cpp
+│       ├── usse_decode_helpers.cpp
+│       ├── usse_disasm.cpp
+│       ├── usse_program_analyzer.cpp
+│       ├── usse_translator_entry.cpp
+│       └── usse_utilities.cpp
+├── shaders-builtin
+│   ├── opengl
+│   │   ├── render_main_bicubic.frag
+│   │   ├── render_main.frag
+│   │   ├── render_main_fxaa.frag
+│   │   └── render_main.vert
+│   └── vulkan
+│       ├── fsr_filter_easu.comp
+│       ├── fsr_filter_easu.comp.spv
+│       ├── fsr_filter_rcas.comp
+│       ├── fsr_filter_rcas.comp.spv
+│       ├── render_main_bicubic.frag
+│       ├── render_main_bicubic.frag.spv
+│       ├── render_main.frag
+│       ├── render_main.frag.spv
+│       ├── render_main_fxaa.frag
+│       ├── render_main_fxaa.frag.spv
+│       ├── render_main.vert
+│       └── render_main.vert.spv
+├── threads
+│   ├── CMakeLists.txt
+│   └── include
+│       └── threads
+│           └── queue.h
+├── touch
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── touch
+│   │       ├── functions.h
+│   │       ├── state.h
+│   │       └── touch.h
+│   └── src
+│       └── touch.cpp
+├── util
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── util
+│   │       ├── align.h
+│   │       ├── arm.h
+│   │       ├── bit_cast.h
+│   │       ├── byte_ring_buffer.h
+│   │       ├── bytes.h
+│   │       ├── containers.h
+│   │       ├── elf.h
+│   │       ├── exec.h
+│   │       ├── exit_code.h
+│   │       ├── find.h
+│   │       ├── float_to_half.h
+│   │       ├── fs.h
+│   │       ├── function_info.h
+│   │       ├── hash.h
+│   │       ├── instrset_detect.h
+│   │       ├── keywords.h
+│   │       ├── lock_and_find.h
+│   │       ├── log.h
+│   │       ├── net_utils.h
+│   │       ├── overloaded.h
+│   │       ├── pool.h
+│   │       ├── preprocessor.h
+│   │       ├── quaternion.h
+│   │       ├── safe_time.h
+│   │       ├── string_utils.h
+│   │       ├── system.h
+│   │       ├── time.h
+│   │       ├── tracy.h
+│   │       ├── tracy_module_utils.h
+│   │       ├── types.h
+│   │       ├── vector_math.h
+│   │       ├── vector_utils.h
+│   │       └── warning.h
+│   └── src
+│       ├── arm.cpp
+│       ├── byte.cpp
+│       ├── float_to_half.cpp
+│       ├── fs_utils.cpp
+│       ├── hash.cpp
+│       ├── instrset_detect.cpp
+│       ├── logging.cpp
+│       ├── net_utils.cpp
+│       ├── string_utils.cpp
+│       ├── tracy.cpp
+│       └── vc_runtime_checker.cpp
+├── Vita3K.ico
+├── Vita3K.png
+├── Vita3K.rc
+├── vkutil
+│   ├── CMakeLists.txt
+│   ├── include
+│   │   └── vkutil
+│   │       ├── objects.h
+│   │       └── vkutil.h
+│   └── src
+│       ├── objects.cpp
+│       └── vkutil.cpp
+└── Windows.manifest
+
+321 directories, 715 files

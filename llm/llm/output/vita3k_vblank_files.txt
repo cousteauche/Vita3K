@@ -1,0 +1,357 @@
+=== Vita3K VBlank Watchdog File Dump ===
+Generated on: Tue Jun  3 06:37:16 AM CEST 2025
+
+===================================================
+FILE: vita3k/config/include/config/state.h
+===================================================
+[FILE NOT FOUND] - vita3k/config/include/config/state.h
+
+
+===================================================
+FILE: vita3k/config/src/config.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/config/src/config.cpp
+
+
+===================================================
+FILE: vita3k/emuenv/include/emuenv/state.h
+===================================================
+[FILE NOT FOUND] - vita3k/emuenv/include/emuenv/state.h
+
+
+===================================================
+FILE: vita3k/emuenv/src/state.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/emuenv/src/state.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceDisplay/SceDisplay.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceDisplay/SceDisplay.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceDisplay/SceDisplay.h
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceDisplay/SceDisplay.h
+
+
+===================================================
+FILE: vita3k/display/functions.h
+===================================================
+[FILE NOT FOUND] - vita3k/display/functions.h
+
+
+===================================================
+FILE: vita3k/display/src/functions.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/display/src/functions.cpp
+
+
+===================================================
+FILE: vita3k/display/state.h
+===================================================
+[FILE NOT FOUND] - vita3k/display/state.h
+
+
+===================================================
+FILE: vita3k/renderer/src/driver_functions.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/driver_functions.cpp
+
+
+===================================================
+FILE: vita3k/renderer/src/vulkan/renderer.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/vulkan/renderer.cpp
+
+
+===================================================
+FILE: vita3k/renderer/src/vulkan/surface_cache.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/vulkan/surface_cache.cpp
+
+
+===================================================
+FILE: vita3k/renderer/src/vulkan/pipeline_cache.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/vulkan/pipeline_cache.cpp
+
+
+===================================================
+FILE: vita3k/renderer/src/vulkan/texture_cache.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/vulkan/texture_cache.cpp
+
+
+===================================================
+FILE: vita3k/renderer/functions.h
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/functions.h
+
+
+===================================================
+FILE: vita3k/renderer/types.h
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/types.h
+
+
+===================================================
+FILE: vita3k/renderer/src/gl/renderer.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/gl/renderer.cpp
+
+
+===================================================
+FILE: vita3k/renderer/src/gl/texture_cache.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/gl/texture_cache.cpp
+
+
+===================================================
+FILE: vita3k/renderer/src/texture_cache.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/src/texture_cache.cpp
+
+
+===================================================
+FILE: vita3k/kernel/include/kernel/state.h
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/include/kernel/state.h
+
+
+===================================================
+FILE: vita3k/kernel/include/kernel/time.h
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/include/kernel/time.h
+
+
+===================================================
+FILE: vita3k/kernel/src/time.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/time.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/scheduler.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/scheduler.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/thread/thread.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/thread/thread.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/thread/thread_state.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/thread/thread_state.cpp
+
+
+===================================================
+FILE: vita3k/kernel/include/kernel/thread/thread_state.h
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/include/kernel/thread/thread_state.h
+
+
+===================================================
+FILE: vita3k/kernel/include/kernel/thread/thread_functions.h
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/include/kernel/thread/thread_functions.h
+
+
+===================================================
+FILE: vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceKernelThreadMgr/SceThreadmgrCoredump.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceKernelThreadMgr/SceThreadmgrCoredump.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceFiber/SceFiber.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceFiber/SceFiber.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/sync/mutex.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/sync/mutex.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/sync/semaphore.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/sync/semaphore.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/sync/condvar.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/sync/condvar.cpp
+
+
+===================================================
+FILE: vita3k/audio/src/audio.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/audio/src/audio.cpp
+
+
+===================================================
+FILE: vita3k/audio/src/ngs.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/audio/src/ngs.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceAudio/SceAudio.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceAudio/SceAudio.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceNgs/SceNgs.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceNgs/SceNgs.cpp
+
+
+===================================================
+FILE: vita3k/shader/src/spirv_recompiler.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/shader/src/spirv_recompiler.cpp
+
+
+===================================================
+FILE: vita3k/shader/src/shader_cache.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/shader/src/shader_cache.cpp
+
+
+===================================================
+FILE: vita3k/gui/src/settings_dialog.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/gui/src/settings_dialog.cpp
+
+
+===================================================
+FILE: vita3k/gui/src/performance_overlay.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/gui/src/performance_overlay.cpp
+
+
+===================================================
+FILE: vita3k/host/src/host.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/host/src/host.cpp
+
+
+===================================================
+FILE: vita3k/host/src/host_func.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/host/src/host_func.cpp
+
+
+===================================================
+FILE: vita3k/io/src/io.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/io/src/io.cpp
+
+
+===================================================
+FILE: vita3k/io/src/vfs.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/io/src/vfs.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceIofilemgr/SceIofilemgr.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceIofilemgr/SceIofilemgr.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceNet/SceNet.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceNet/SceNet.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceNetCtl/SceNetCtl.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceNetCtl/SceNetCtl.cpp
+
+
+===================================================
+FILE: vita3k/modules/SceHttp/SceHttp.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/SceHttp/SceHttp.cpp
+
+
+===================================================
+FILE: vita3k/app/src/app.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/app/src/app.cpp
+
+
+===================================================
+FILE: vita3k/app/src/app_init.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/app/src/app_init.cpp
+
+
+===================================================
+FILE: vita3k/app/src/app_exit.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/app/src/app_exit.cpp
+
+
+===================================================
+FILE: vita3k/modules/module_parent.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/modules/module_parent.cpp
+
+
+===================================================
+FILE: vita3k/kernel/src/load_self.cpp
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/src/load_self.cpp
+
+
+===================================================
+FILE: vita3k/kernel/CMakeLists.txt
+===================================================
+[FILE NOT FOUND] - vita3k/kernel/CMakeLists.txt
+
+
+===================================================
+FILE: vita3k/gui/CMakeLists.txt
+===================================================
+[FILE NOT FOUND] - vita3k/gui/CMakeLists.txt
+
+
+===================================================
+FILE: vita3k/modules/CMakeLists.txt
+===================================================
+[FILE NOT FOUND] - vita3k/modules/CMakeLists.txt
+
+
+===================================================
+FILE: vita3k/renderer/CMakeLists.txt
+===================================================
+[FILE NOT FOUND] - vita3k/renderer/CMakeLists.txt
+
+
+===================================================
+FILE: vita3k/audio/CMakeLists.txt
+===================================================
+[FILE NOT FOUND] - vita3k/audio/CMakeLists.txt
+
+

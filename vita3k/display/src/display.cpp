@@ -8,14 +8,14 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <display/functions.h>
+#include <display/functions.h> // This header is where 'notify_frame_presented' will be declared globally
 
 #include <dialog/state.h>
 #include <display/state.h>
@@ -214,4 +214,30 @@ void update_prediction(EmuEnvState &emuenv, DisplayFrameInfo &frame) {
 
     // let predict_next_image reset the cycle if necessary
     display.predicted_cycles_seen = std::min(display.predicted_cycles_seen, 1U);
+}
+
+// THIS IS THE MODIFIED FUNCTION update_display.
+// Please replace the original update_display function in your file with this one.
+void update_display(EmuEnvState &emuenv) {
+    // These lines are where the renderer is told to draw and present.
+    // The specific calls from your app_init.cpp and renderer.cpp dumps were:
+    // emuenv.renderer->render_frame(...);
+    // emuenv.renderer->swap_window(...);
+    emuenv.renderer->render_frame(emuenv.display.viewport_pos, emuenv.display.viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
+    
+    // Call the renderer to swap the front and back buffers, displaying the new frame on screen;
+    // This is the point where the frame is effectively "presented" to the user.
+    emuenv.renderer->swap_window(emuenv.window.get());
+
+    // --- CRITICAL ADDITION FOR WIPEOUT 60FPS HACK ---
+    // Notify the frame pacer ONLY if the WipEout 60FPS hack is enabled.
+    // This ensures that notify_frame_presented() is called right
+    // after the frame is shown on the host screen.
+    if (emuenv.display.fps_hack &&
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        
+        // Call the globally declared function to notify the frame pacer.
+        notify_frame_presented(); // This calls the function defined in SceDisplay.cpp
+    }
+    // --- END CRITICAL ADDITION ---
 }

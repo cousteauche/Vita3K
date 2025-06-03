@@ -31,3 +31,5 @@ void wait_vblank(DisplayState &display, KernelState &kernel, const ThreadStatePt
 // if the result is not nullptr, contain the predicted frame (pointer needs to be freed later)
 DisplayFrameInfo *predict_next_image(EmuEnvState &emuenv, Address sync_object);
 void update_prediction(EmuEnvState &emuenv, DisplayFrameInfo &frame);
+
+void notify_frame_presented();
