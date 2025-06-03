@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -27,39 +27,36 @@
 #include <util/types.h>
 
 #include <util/tracy.h>
-#include <atomic>      // For std::atomic
-#include <deque>       // For std::deque
-#include <cmath>       // For std::sqrt
-#include <chrono>      // For std::chrono
-#include <thread>      // For std::this_thread::sleep_for and yield
-#include <algorithm>   // For std::min/max
+#include <atomic>
+#include <deque>
+#include <cmath>
 
 TRACY_MODULE_NAME(SceDisplay);
 
 // Advanced frame pacing system for 60fps patches
-namespace { // Anonymous namespace to keep FramePacer internal
+namespace {
     struct FramePacer {
-        std::atomic<uint32_t> pending_frames{0}; // Frames submitted by game but not yet presented by emulator
-        std::atomic<uint64_t> total_frames{0};   // Total frames submitted by game
-        std::atomic<uint64_t> presented_frames{0}; // Total frames presented by emulator
-        std::chrono::steady_clock::time_point last_frame_submit_time; // Time of last _sceDisplaySetFrameBuf
-        std::chrono::steady_clock::time_point start_time; // Start time for overall FPS calculation
-        std::mutex timing_mutex; // Protects frame_times deque
-        std::deque<std::chrono::microseconds> frame_times; // History of frame durations
-        static constexpr size_t FRAME_TIME_HISTORY = 60; // How many frames to keep history for
+        std::atomic<uint32_t> pending_frames{0};
+        std::atomic<uint64_t> total_frames{0};
+        std::atomic<uint64_t> presented_frames{0};
+        std::chrono::steady_clock::time_point last_frame_time;
+        std::chrono::steady_clock::time_point start_time;
+        std::mutex timing_mutex;
+        std::deque<std::chrono::microseconds> frame_times;
+        static constexpr size_t FRAME_TIME_HISTORY = 60;
         
         // Adaptive pacing parameters
-        std::atomic<int> target_pending{2};      // Optimal queue depth (frames in flight)
-        std::atomic<int> sleep_us{100};          // Base sleep time in microseconds
-        std::atomic<bool> use_precise_timing{true}; // Flag for spin-wait vs sleep_for
+        std::atomic<int> target_pending{2};      // Optimal queue depth
+        std::atomic<int> sleep_us{100};          // Base sleep time
+        std::atomic<bool> use_precise_timing{true};
         
         // Performance metrics
         std::atomic<double> current_fps{0.0};
         std::atomic<double> frame_time_variance{0.0};
-        std::atomic<int> stutter_frames{0}; // Counter for frames taking too long
+        std::atomic<int> stutter_frames{0};
         
         FramePacer() : 
-            last_frame_submit_time(std::chrono::steady_clock::now()),
+            last_frame_time(std::chrono::steady_clock::now()),
             start_time(std::chrono::steady_clock::now()) {}
         
         void on_frame_submit() {
@@ -69,7 +66,7 @@ namespace { // Anonymous namespace to keep FramePacer internal
             // Track frame timing
             auto now = std::chrono::steady_clock::now();
             auto delta = std::chrono::duration_cast<std::chrono::microseconds>(
-                now - last_frame_submit_time); // Time since last frame submitted
+                now - last_frame_time);
             
             {
                 std::lock_guard<std::mutex> lock(timing_mutex);
@@ -78,35 +75,34 @@ namespace { // Anonymous namespace to keep FramePacer internal
                     frame_times.pop_front();
                 }
                 
-                // Detect stutters (frames taking > 20ms, for 60 FPS, this is > 1.2 frame times)
+                // Detect stutters (frames taking > 20ms)
                 if (delta.count() > 20000) {
                     stutter_frames++;
                 }
             }
             
-            last_frame_submit_time = now; // Update last submit time for next frame
+            last_frame_time = now;
             
-            // Dynamic adjustment of base sleep time based on queue depth
+            // Dynamic adjustment based on queue depth
             int pending = pending_frames.load();
             if (pending > target_pending + 2) {
-                // Way too many pending, aggressive increase in base sleep
+                // Way too many pending, aggressive wait
                 sleep_us = std::min(2000, sleep_us.load() + 100);
             } else if (pending > target_pending) {
                 // Slightly too many, gentle increase
                 sleep_us = std::min(1000, sleep_us.load() + 25);
             } else if (pending < target_pending && sleep_us > 50) {
-                // Too few, decrease base sleep
+                // Too few, decrease wait
                 sleep_us = std::max(50, sleep_us.load() - 50);
             }
             
-            // Update FPS metrics periodically
-            if (total_frames % 30 == 0) { // Update every 30 submitted frames
+            // Update FPS every 30 frames
+            if (total_frames % 30 == 0) {
                 update_metrics();
             }
         }
         
         void on_frame_present() {
-            // This function MUST be called by Vita3K's renderer whenever a frame is actually presented to the screen.
             if (pending_frames > 0) {
                 pending_frames--;
             }
@@ -114,53 +110,47 @@ namespace { // Anonymous namespace to keep FramePacer internal
         }
         
         void adaptive_wait() {
-            // This function is called after the game submits a frame to the emulator (in _sceDisplaySetFrameBuf).
-            // It introduces a pause to prevent the game from overwhelming the emulator's backend.
-            
             int pending = pending_frames.load();
             
             if (use_precise_timing) {
-                // Target 16.67ms (1/60th of a second) for 60fps
+                // Target 16.67ms frame time for 60fps
                 static constexpr auto target_frame_time = std::chrono::microseconds(16667);
                 auto now = std::chrono::steady_clock::now();
-                auto elapsed_since_last_submit = std::chrono::duration_cast<std::chrono::microseconds>(
-                    now - last_frame_submit_time); // Time spent *since* the last frame submission
+                auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                    now - last_frame_time);
                 
-                if (elapsed_since_last_submit < target_frame_time && pending <= target_pending) {
-                    // We're processing game logic faster than 60 FPS and the queue isn't building up excessively.
-                    // Calculate how much longer we need to wait to hit the 60 FPS target.
-                    auto wait_time = target_frame_time - elapsed_since_last_submit;
+                if (elapsed < target_frame_time && pending <= target_pending) {
+                    // We're running too fast and queue is healthy
+                    auto wait_time = target_frame_time - elapsed;
                     
-                    // Use sleep_for for larger waits, then spin-wait for precision.
-                    // This avoids oversleeping and makes timing more accurate.
-                    if (wait_time > std::chrono::microseconds(1000)) { // If wait is > 1ms, sleep most of it
-                        std::this_thread::sleep_for(wait_time - std::chrono::microseconds(500)); // Sleep for (wait_time - 0.5ms)
+                    // High precision wait
+                    if (wait_time > std::chrono::microseconds(1000)) {
+                        std::this_thread::sleep_for(wait_time - std::chrono::microseconds(500));
                     }
                     
-                    // Spin wait for the last bit of precision or if wait_time was small
-                    // This burns CPU but ensures very accurate timing.
-                    while (std::chrono::steady_clock::now() - last_frame_submit_time < target_frame_time) {
-                        std::this_thread::yield(); // Yield to allow other threads if possible
+                    // Spin wait for precision
+                    while (std::chrono::steady_clock::now() - last_frame_time < target_frame_time) {
+                        std::this_thread::yield();
                     }
-                    return; // Done with adaptive wait for this frame
+                    return;
                 }
             }
             
-            // Fallback: Dynamic sleep based on queue depth (if precise timing is off or conditions not met)
+            // Fallback: Dynamic sleep based on queue depth
             if (pending > target_pending) {
-                // Progressive backoff: sleep longer if more frames are pending
-                long long sleep_time = sleep_us.load() * (1 + (pending - target_pending) / 2);
+                // Progressive backoff
+                int sleep_time = sleep_us * (1 + (pending - target_pending) / 2);
                 
                 // Mix of sleep and yield for better granularity
-                if (sleep_time > 500) { // If sleep is > 0.5ms, break it into sleep and yield
+                if (sleep_time > 500) {
                     std::this_thread::sleep_for(std::chrono::microseconds(sleep_time / 2));
                     std::this_thread::yield();
                     std::this_thread::sleep_for(std::chrono::microseconds(sleep_time / 2));
-                } else if (sleep_time > 0) {
+                } else {
                     std::this_thread::sleep_for(std::chrono::microseconds(sleep_time));
                 }
             } else {
-                // Queue is healthy or under-filled, just yield to allow other threads to run
+                // Queue is healthy, just yield
                 std::this_thread::yield();
             }
         }
@@ -168,23 +158,22 @@ namespace { // Anonymous namespace to keep FramePacer internal
         void update_metrics() {
             std::lock_guard<std::mutex> lock(timing_mutex);
             
-            if (frame_times.size() < 10) return; // Need enough history
+            if (frame_times.size() < 10) return;
             
-            // Calculate average frame time and variance from history
+            // Calculate average frame time and variance
             double sum = 0.0;
             double sum_sq = 0.0;
             for (const auto& ft : frame_times) {
-                double ms = ft.count() / 1000.0; // Convert microseconds to milliseconds
+                double ms = ft.count() / 1000.0;
                 sum += ms;
                 sum_sq += ms * ms;
             }
             
             double avg = sum / frame_times.size();
-            double variance_val = (sum_sq / frame_times.size()) - (avg * avg);
-            if (variance_val < 0) variance_val = 0; // Ensure non-negative for sqrt (floating point precision)
-            frame_time_variance = std::sqrt(variance_val);
+            double variance = (sum_sq / frame_times.size()) - (avg * avg);
+            frame_time_variance = std::sqrt(variance);
             
-            // Calculate FPS from actual presented frames since start
+            // Calculate FPS from actual presentation rate
             auto now = std::chrono::steady_clock::now();
             auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now - start_time).count();
@@ -193,10 +182,12 @@ namespace { // Anonymous namespace to keep FramePacer internal
                 current_fps = (presented_frames.load() * 1000.0) / total_time;
             }
             
-            // Adjust precision timing flag based on variance
-            if (frame_time_variance.load() > 5.0) { // High variance suggests spin-wait is counter-productive
+            // Adjust precision timing based on variance
+            if (frame_time_variance > 5.0) {
+                // High variance, disable precision timing
                 use_precise_timing = false;
-            } else if (frame_time_variance.load() < 2.0) { // Low variance, try precise timing
+            } else if (frame_time_variance < 2.0) {
+                // Low variance, enable precision timing
                 use_precise_timing = true;
             }
         }
@@ -213,7 +204,7 @@ namespace { // Anonymous namespace to keep FramePacer internal
     
     // Global pacer instance
     FramePacer g_wipeout_pacer;
-} // End anonymous namespace
+}
 
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
@@ -228,24 +219,21 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
             skip_count++;
             
             if (skip_count % 60 == 0) {
-                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits (original working hack)", skip_count);
-                g_wipeout_pacer.log_stats(); // Log pacer stats periodically
+                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits", skip_count);
+                g_wipeout_pacer.log_stats();
             }
             
-            // Return immediately - this is the key to 60fps for WipEout's display to work
+            // Return immediately - this is the key to 60fps
             return SCE_DISPLAY_ERROR_OK;
         }
         
-        // For non-SetFrameBuf waits, minimal wait as per original hack.
-        // This is handled by `wait_vblank` at the end of the function.
-        vcount = 0; 
-        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0, original hack).", static_cast<int>(original_vcount)); 
+        // For non-SetFrameBuf waits, minimal wait
+        vcount = 0;
     }
 
-    // Original fps_hack for other games - This applies if the WipEout-specific hack above didn't activate.
-    else if (emuenv.display.fps_hack && vcount > 1) { // Note: Removed 'if' to 'else if' to ensure only one block executes
+    // Original fps_hack for other games
+    if (emuenv.display.fps_hack && vcount > 1) {
         vcount = 1;
-        LOG_INFO("General FPS Hack: Adjusted vcount from original >1 to 1.");
     }
 
     uint64_t target_vcount;
@@ -258,7 +246,6 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
         target_vcount = thread->last_vblank_waited;
     }
 
-    // This `wait_vblank` is called for non-WipEout hacks or when WipEout's `is_since_setbuf` is false.
     wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
 
     if (emuenv.display.abort.load())
@@ -330,25 +317,27 @@ EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
 EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
     
-    // WipEout specific logic
+    // Track frame submission for WipEout
     if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
-        // Notify pacer of frame submission
         g_wipeout_pacer.on_frame_submit();
-
-        // FPS calculation and logging (every 60 submitted frames)
+    }
+    
+    // WipEout 2048 FPS tracking
+    if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         static int frame_count = 0;
-        static auto last_fps_log_time = std::chrono::high_resolution_clock::now();
+        static auto last_time = std::chrono::high_resolution_clock::now();
         
         frame_count++;
+        
         if (frame_count % 60 == 0) {
             auto now = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_fps_log_time).count();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
             LOG_INFO("WipEout FPS: {:.1f} (sync: {}, base: 0x{:X})", 
                      fps, static_cast<int>(sync), 
                      pFrameBuf ? reinterpret_cast<uintptr_t>(pFrameBuf->base.get(emuenv.mem)) : 0);
-            last_fps_log_time = now;
+            last_time = now;
         }
     }
     
@@ -379,7 +368,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     DisplayFrameInfo &info = emuenv.display.sce_frame;
 
     info.base = pFrameBuf->base;
-    info.pitch = pFrameBuf->pitch; // CRITICAL FIX
+    info.pitch = pFrameBuf->pitch;
     info.pixelformat = pFrameBuf->pixelformat;
     info.image_size.x = pFrameBuf->width;
     info.image_size.y = pFrameBuf->height;
@@ -388,16 +377,15 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     emuenv.display.last_setframe_vblank_count = emuenv.display.vblank_count.load();
     emuenv.frame_count++;
 
-    // Apply adaptive frame pacing
+    // Enhanced adaptive frame pacing for WipEout
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        
+        // Use adaptive waiting instead of simple yield
         g_wipeout_pacer.adaptive_wait();
         
         // Additional optimization: prefetch next frame data
-        // Only prefetch if pFrameBuf->base is valid
-        if (pFrameBuf->base) {
-            __builtin_prefetch(pFrameBuf->base.get(emuenv.mem), 0, 3);
-        }
+        __builtin_prefetch(pFrameBuf->base.get(emuenv.mem), 0, 3);
     }
 
 #ifdef TRACY_ENABLE
@@ -431,8 +419,8 @@ EXPORT(SceInt32, sceDisplayGetRefreshRate, float *pFps) {
         
         // Report current achieved FPS to encourage game to adapt
         float current = g_wipeout_pacer.current_fps.load();
-        if (current > 55.0f && current < 65.0f) { // If close to 60 FPS
-            *pFps = current;  // Report actual FPS
+        if (current > 55.0f && current < 65.0f) {
+            *pFps = current;  // Report actual FPS when close to 60
         } else {
             *pFps = 119.8801f;  // Otherwise report 120Hz to encourage 60fps target
         }
@@ -496,17 +484,10 @@ EXPORT(SceInt32, sceDisplayWaitSetFrameBufCB) {
     return display_wait(emuenv, thread_id, 1, true, true);
 }
 
-// Remove duplicate EXPORT for sceDisplayWaitSetFrameBufMulti
-// EXPORT(SceInt32, sceDisplayWaitSetFrameBufMulti, SceUInt vcount) {
-//     TRACY_FUNC(sceDisplayWaitSetFrameBufMulti, vcount);
-//     return display_wait(emuenv, thread_id, static_cast<int>(vcount), true, false);
-// }
-
-EXPORT(SceInt32, sceDisplayWaitSetFrameBufMulti, SceUInt vcount) { // Renamed from duplicate
-    TRACY_FUNC(sceDisplayWaitSetFrameBufMulti, vcount); // Removed this, duplicate TRACY_FUNC
+EXPORT(SceInt32, sceDisplayWaitSetFrameBufMulti, SceUInt vcount) {
+    TRACY_FUNC(sceDisplayWaitSetFrameBufMulti, vcount);
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), true, false);
 }
-
 
 EXPORT(SceInt32, sceDisplayWaitSetFrameBufMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitSetFrameBufMultiCB, vcount);
@@ -523,22 +504,16 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartCB) {
     return display_wait(emuenv, thread_id, 1, false, true);
 }
 
-// Remove duplicate EXPORT for sceDisplayWaitVblankStartMulti
-// EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
-//     TRACY_FUNC(sceDisplayWaitVblankStartMulti, vcount);
-//     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
-// }
-
-// Keeping this one.
 EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMulti, vcount);
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
-EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
-    TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
-    return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
-}
+// Removed the duplicate definition of sceDisplayWaitVblankStartMultiCB
+// EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
+//     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
+//     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
+// }
 
 // Renderer callback integration (must be outside module namespace)
 namespace display {
