@@ -30,6 +30,7 @@
 #include <atomic>
 #include <deque>
 #include <cmath>
+#include <thread> // Added for std::this_thread::sleep_for and std::this_thread::yield
 
 TRACY_MODULE_NAME(SceDisplay);
 
@@ -509,16 +510,12 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
+// THIS IS THE SINGLE, CORRECT EXPORT FOR sceDisplayWaitVblankStartMultiCB
+// It must exist and not be commented out.
 EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
-
-// Removed the duplicate definition of sceDisplayWaitVblankStartMultiCB
-// EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
-//     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
-//     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
-// }
 
 // Renderer callback integration (must be outside module namespace)
 namespace display {
