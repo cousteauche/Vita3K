@@ -167,8 +167,8 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
-            // --- FIX FOR ERROR 2: Use .get() to retrieve raw pointer from Ptr<T> ---
-            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), reinterpret_cast<uintptr_t>(pFrameBuf->base.get()));
+            // --- FIX FOR ERROR 2: Use .get(emuenv.mem) to retrieve raw pointer from Ptr<T> ---
+            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), reinterpret_cast<uintptr_t>(pFrameBuf->base.get(emuenv.mem)));
             // --- END FIX ---
             last_time = now;
         }
