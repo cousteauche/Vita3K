@@ -509,9 +509,9 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
-EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
-    TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
-    return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
+EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
+    TRACY_FUNC(sceDisplayWaitVblankStartMulti, vcount);
+    return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
@@ -519,7 +519,7 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
 
-} // namespace MODULES
+// Remove the duplicate function and extra brace
 
 // Renderer callback integration (must be outside module namespace)
 namespace display {
