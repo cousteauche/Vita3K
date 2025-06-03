@@ -3,7 +3,7 @@
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
-// by the Free Software Foundation; either version 2 of the License, or
+// the Free Software Foundation; either version 2 of the License, or
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
@@ -47,19 +47,22 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
                 LOG_INFO("WipEout 60FPS: Bypassed {} frame waits (original working hack)", skip_count);
             }
             
+            // Enhanced logging for display_wait
+            LOG_INFO("WipEout display_wait: is_since_setbuf=true, vcount={}, returning immediately.", vcount);
+            
             // Return immediately without waiting (CRITICAL for WipEout's display)
             return SCE_DISPLAY_ERROR_OK;
         }
         
         // For non-SetFrameBuf waits, reduce vcount to minimum (original working hack)
         vcount = 0;
-        LOG_INFO("WipEout 60FPS: Forced VblankStart wait vcount to 0 (original working hack)");
+        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0).", vcount);
     }
 
     // Original fps_hack code (for other games) - This applies if the WipEout-specific hack above didn't activate.
     if (emuenv.display.fps_hack && vcount > 1) {
         vcount = 1;
-        LOG_INFO("General FPS Hack: Adjusted vcount from original >1 to 1");
+        LOG_INFO("General FPS Hack: Adjusted vcount from original >1 to 1.");
     }
 
     uint64_t target_vcount;
@@ -160,7 +163,8 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
-            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {})", fps, static_cast<int>(sync));
+            // ENHANCED LOGGING: Add pFrameBuf->base address here
+            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), pFrameBuf->base);
             last_time = now;
         }
     }
@@ -210,17 +214,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         
-        // Yield the current thread. This tells the OS scheduler: "I'm not busy right now,
-        // you can schedule other threads." This is a non-blocking way to give other threads
-        // (like the renderer) a chance to run.
         std::this_thread::yield(); 
-
-        // If std::this_thread::yield() is not sufficient, you might need to try a very short sleep.
-        // Uncomment and experiment with values like:
-        // std::this_thread::sleep_for(std::chrono::microseconds(100)); // 100 microseconds
-        // std::this_thread::sleep_for(std::chrono::microseconds(500)); // 500 microseconds
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1));  // 1 millisecond
-        // Be careful: too long a sleep will reduce overall FPS. Start small and increase if needed.
         
         LOG_INFO("WipEout 60FPS: Micro-yield performed after frame submission.");
     }
