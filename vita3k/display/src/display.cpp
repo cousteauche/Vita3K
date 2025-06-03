@@ -15,7 +15,7 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <display/functions.h> // This header should declare 'notify_frame_presented' globally
+#include <display/functions.h> // This header is where 'notify_frame_presented' is declared globally
 
 #include <dialog/state.h>
 #include <display/state.h>
@@ -24,8 +24,7 @@
 #include <io/state.h>   // CRITICAL FIX: Include full definition of IOState here
 #include <emuenv/state.h> // CRITICAL FIX: Include emuenv/state.h AFTER io/state.h to avoid incomplete type errors
 
-// CRITICAL FIX: Corrected include path for SceDisplay.h
-#include <modules/SceDisplay/SceDisplay.h> // This is for FramePacer's logging and other SceDisplay exports
+// Removed: #include <modules/SceDisplay/SceDisplay.h> - Not needed here, causes issues with includes.
 
 #include <chrono>
 #include <motion/functions.h>
