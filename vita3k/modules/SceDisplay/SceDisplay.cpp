@@ -519,8 +519,6 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
 
-} // namespace MODULES
-
 // Renderer callback integration (must be outside module namespace)
 namespace display {
     void notify_frame_presented() {
