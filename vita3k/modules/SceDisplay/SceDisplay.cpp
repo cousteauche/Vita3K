@@ -8,16 +8,16 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE. See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include "SceDisplay.h" // This is the local header for this .cpp file
+#include "SceDisplay.h"
 
-#include <display/functions.h> // This header is where the global 'notify_frame_presented' is declared for other files
+#include <display/functions.h>
 #include <display/state.h>
 #include <io/state.h>
 #include <kernel/state.h>
@@ -27,57 +27,49 @@
 #include <util/types.h>
 
 #include <util/tracy.h>
-
-// CRITICAL FIX: Explicitly and correctly including all required standard library headers.
-// These are essential for std::atomic, std::chrono, std::mutex, std::deque, std::sqrt, and std::this_thread.
 #include <atomic>
-#include <chrono>
-#include <mutex>
 #include <deque>
 #include <cmath>
-#include <thread>
-#include <algorithm> // For std::min, std::max
-
 
 TRACY_MODULE_NAME(SceDisplay);
 
 // Advanced frame pacing system for 60fps patches
-namespace { // This anonymous namespace correctly isolates the FramePacer implementation
+namespace {
     struct FramePacer {
-        ::std::atomic<uint32_t> pending_frames{0};
-        ::std::atomic<uint64_t> total_frames{0};
-        ::std::atomic<uint64_t> presented_frames{0};
-        ::std::chrono::steady_clock::time_point last_frame_time;
-        ::std::chrono::steady_clock::time_point start_time;
-        ::std::mutex timing_mutex;
-        ::std::deque<::std::chrono::microseconds> frame_times;
+        std::atomic<uint32_t> pending_frames{0};
+        std::atomic<uint64_t> total_frames{0};
+        std::atomic<uint64_t> presented_frames{0};
+        std::chrono::steady_clock::time_point last_frame_time;
+        std::chrono::steady_clock::time_point start_time;
+        std::mutex timing_mutex;
+        std::deque<std::chrono::microseconds> frame_times;
         static constexpr size_t FRAME_TIME_HISTORY = 60;
         
         // Adaptive pacing parameters
-        ::std::atomic<int> target_pending{2};      // Optimal queue depth
-        ::std::atomic<int> sleep_us{100};          // Base sleep time
-        ::std::atomic<bool> use_precise_timing{true};
+        std::atomic<int> target_pending{2};      // Optimal queue depth
+        std::atomic<int> sleep_us{100};          // Base sleep time
+        std::atomic<bool> use_precise_timing{true};
         
         // Performance metrics
-        ::std::atomic<double> current_fps{0.0};
-        ::std::atomic<double> frame_time_variance{0.0};
-        ::std::atomic<int> stutter_frames{0};
+        std::atomic<double> current_fps{0.0};
+        std::atomic<double> frame_time_variance{0.0};
+        std::atomic<int> stutter_frames{0};
         
         FramePacer() : 
-            last_frame_time(::std::chrono::steady_clock::now()),
-            start_time(::std::chrono::steady_clock::now()) {}
+            last_frame_time(std::chrono::steady_clock::now()),
+            start_time(std::chrono::steady_clock::now()) {}
         
         void on_frame_submit() {
             pending_frames++;
             total_frames++;
             
             // Track frame timing
-            auto now = ::std::chrono::steady_clock::now();
-            auto delta = ::std::chrono::duration_cast<::std::chrono::microseconds>(
+            auto now = std::chrono::steady_clock::now();
+            auto delta = std::chrono::duration_cast<std::chrono::microseconds>(
                 now - last_frame_time);
             
             {
-                ::std::lock_guard<::std::mutex> lock(timing_mutex);
+                std::lock_guard<std::mutex> lock(timing_mutex);
                 frame_times.push_back(delta);
                 if (frame_times.size() > FRAME_TIME_HISTORY) {
                     frame_times.pop_front();
@@ -95,13 +87,13 @@ namespace { // This anonymous namespace correctly isolates the FramePacer implem
             int pending = pending_frames.load();
             if (pending > target_pending + 2) {
                 // Way too many pending, aggressive wait
-                sleep_us = ::std::min(2000, sleep_us.load() + 100);
+                sleep_us = std::min(2000, sleep_us.load() + 100);
             } else if (pending > target_pending) {
                 // Slightly too many, gentle increase
-                sleep_us = ::std::min(1000, sleep_us.load() + 25);
+                sleep_us = std::min(1000, sleep_us.load() + 25);
             } else if (pending < target_pending && sleep_us > 50) {
                 // Too few, decrease wait
-                sleep_us = ::std::max(50, sleep_us.load() - 50);
+                sleep_us = std::max(50, sleep_us.load() - 50);
             }
             
             // Update FPS every 30 frames
@@ -122,9 +114,9 @@ namespace { // This anonymous namespace correctly isolates the FramePacer implem
             
             if (use_precise_timing) {
                 // Target 16.67ms frame time for 60fps
-                static constexpr auto target_frame_time = ::std::chrono::microseconds(16667);
-                auto now = ::std::chrono::steady_clock::now();
-                auto elapsed = ::std::chrono::duration_cast<::std::chrono::microseconds>(
+                static constexpr auto target_frame_time = std::chrono::microseconds(16667);
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                     now - last_frame_time);
                 
                 if (elapsed < target_frame_time && pending <= target_pending) {
@@ -132,13 +124,13 @@ namespace { // This anonymous namespace correctly isolates the FramePacer implem
                     auto wait_time = target_frame_time - elapsed;
                     
                     // High precision wait
-                    if (wait_time > ::std::chrono::microseconds(1000)) {
-                        ::std::this_thread::sleep_for(wait_time - ::std::chrono::microseconds(500));
+                    if (wait_time > std::chrono::microseconds(1000)) {
+                        std::this_thread::sleep_for(wait_time - std::chrono::microseconds(500));
                     }
                     
                     // Spin wait for precision
-                    while (::std::chrono::steady_clock::now() - last_frame_time < target_frame_time) {
-                        ::std::this_thread::yield();
+                    while (std::chrono::steady_clock::now() - last_frame_time < target_frame_time) {
+                        std::this_thread::yield();
                     }
                     return;
                 }
@@ -151,20 +143,20 @@ namespace { // This anonymous namespace correctly isolates the FramePacer implem
                 
                 // Mix of sleep and yield for better granularity
                 if (sleep_time > 500) {
-                    ::std::this_thread::sleep_for(::std::chrono::microseconds(sleep_time / 2));
-                    ::std::this_thread::yield();
-                    ::std::this_thread::sleep_for(::std::chrono::microseconds(sleep_time / 2));
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleep_time / 2));
+                    std::this_thread::yield();
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleep_time / 2));
                 } else {
-                    ::std::this_thread::sleep_for(::std::chrono::microseconds(sleep_time));
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleep_time));
                 }
             } else {
                 // Queue is healthy, just yield
-                ::std::this_thread::yield();
+                std::this_thread::yield();
             }
         }
         
         void update_metrics() {
-            ::std::lock_guard<::std::mutex> lock(timing_mutex);
+            std::lock_guard<std::mutex> lock(timing_mutex);
             
             if (frame_times.size() < 10) return;
             
@@ -179,11 +171,11 @@ namespace { // This anonymous namespace correctly isolates the FramePacer implem
             
             double avg = sum / frame_times.size();
             double variance = (sum_sq / frame_times.size()) - (avg * avg);
-            frame_time_variance = ::std::sqrt(variance);
+            frame_time_variance = std::sqrt(variance);
             
             // Calculate FPS from actual presentation rate
-            auto now = ::std::chrono::steady_clock::now();
-            auto total_time = ::std::chrono::duration_cast<::std::chrono::milliseconds>(
+            auto now = std::chrono::steady_clock::now();
+            auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now - start_time).count();
             
             if (total_time > 0) {
@@ -210,25 +202,9 @@ namespace { // This anonymous namespace correctly isolates the FramePacer implem
         }
     };
     
-    // Global pacer instance, accessible within this anonymous namespace
+    // Global pacer instance
     FramePacer g_wipeout_pacer;
-
-    // Define notify_frame_presented_internal within the anonymous namespace to access g_wipeout_pacer
-    void notify_frame_presented_internal() {
-        g_wipeout_pacer.on_frame_present();
-    }
-
-} // end of anonymous namespace
-
-// Expose notify_frame_presented_internal as a global function with external linkage
-// This is what display.cpp will call.
-// This declaration is here because it's the *defining* compilation unit.
-// It needs to match the declaration in display/functions.h
-void notify_frame_presented() {
-    // Call the internal version within the anonymous namespace
-    notify_frame_presented_internal();
 }
-
 
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
@@ -266,7 +242,7 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
     } else {
         const uint64_t next_vsync = emuenv.display.vblank_count + 1;
         const uint64_t min_vsync = thread->last_vblank_waited + vcount;
-        thread->last_vblank_waited = ::std::max(next_vsync, min_vsync);
+        thread->last_vblank_waited = std::max(next_vsync, min_vsync);
         target_vcount = thread->last_vblank_waited;
     }
 
@@ -285,7 +261,7 @@ EXPORT(SceInt32, _sceDisplayGetFrameBuf, SceDisplayFrameBuf *pFrameBuf, SceDispl
     else if (sync != SCE_DISPLAY_SETBUF_NEXTFRAME && sync != SCE_DISPLAY_SETBUF_IMMEDIATE)
         return RET_ERROR(SCE_DISPLAY_ERROR_INVALID_UPDATETIMING);
 
-    const ::std::lock_guard<::std::mutex> guard(emuenv.display.display_info_mutex);
+    const std::lock_guard<std::mutex> guard(emuenv.display.display_info_mutex);
 
     // ignore value of sync in GetFrameBuf
     DisplayFrameInfo *info = &emuenv.display.sce_frame;
@@ -342,20 +318,20 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
     
     // Track frame submission for WipEout
-    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+    if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         g_wipeout_pacer.on_frame_submit();
     }
     
     // WipEout 2048 FPS tracking
-    if (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015") {
+    if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         static int frame_count = 0;
-        static auto last_time = ::std::chrono::high_resolution_clock::now();
+        static auto last_time = std::chrono::high_resolution_clock::now();
         
         frame_count++;
         
         if (frame_count % 60 == 0) {
-            auto now = ::std::chrono::high_resolution_clock::now();
-            auto duration = ::std::chrono::duration_cast<::std::chrono::milliseconds>(now - last_time).count();
+            auto now = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
             LOG_INFO("WipEout FPS: {:.1f} (sync: {}, base: 0x{:X})", 
@@ -393,7 +369,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
 
     info.base = pFrameBuf->base;
     info.pitch = pFrameBuf->pitch;
-    info.pixelformat = info.pixelformat;
+    info.pixelformat = pFrameBuf->pixelformat;
     info.image_size.x = pFrameBuf->width;
     info.image_size.y = pFrameBuf->height;
     update_prediction(emuenv, info);
@@ -481,7 +457,7 @@ EXPORT(SceInt32, sceDisplayRegisterVblankStartCallback, SceUID uid) {
     if (!cb)
         return RET_ERROR(SCE_DISPLAY_ERROR_INVALID_VALUE);
 
-    ::std::lock_guard<::std::mutex> guard(emuenv.display.mutex);
+    std::lock_guard<std::mutex> guard(emuenv.display.mutex);
     emuenv.display.vblank_callbacks[uid] = cb;
 
     return 0;
@@ -492,7 +468,7 @@ EXPORT(SceInt32, sceDisplayUnregisterVblankStartCallback, SceUID uid) {
     if (!emuenv.display.vblank_callbacks.contains(uid))
         return RET_ERROR(SCE_DISPLAY_ERROR_INVALID_VALUE);
 
-    ::std::lock_guard<::std::mutex> guard(emuenv.display.mutex);
+    std::lock_guard<std::mutex> guard(emuenv.display.mutex);
     emuenv.display.vblank_callbacks.erase(uid);
 
     return 0;
@@ -533,17 +509,21 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
-// THIS IS THE SINGLE, CORRECT EXPORT FOR sceDisplayWaitVblankStartMultiCB
-// It must exist and not be commented out.
 EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
 
-// Renderer callback integration (global function)
-// This function needs to be available globally so display.cpp can call it.
-void notify_frame_presented() {
-    // This increments the count of frames that the host display has actually rendered.
-    // It's crucial for the FramePacer to know when frames are truly presented.
-    g_wipeout_pacer.on_frame_present();
+EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
+    TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
+    return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
+}
+
+} // namespace MODULES
+
+// Renderer callback integration (must be outside module namespace)
+namespace display {
+    void notify_frame_presented() {
+        g_wipeout_pacer.on_frame_present();
+    }
 }
