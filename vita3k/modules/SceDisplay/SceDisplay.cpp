@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -17,7 +17,7 @@
 
 #include "SceDisplay.h"
 
-#include <display/functions.h>
+#include <display/functions.h> // Keep this include - it's where the declaration should be
 #include <display/state.h>
 #include <io/state.h>
 #include <kernel/state.h>
@@ -35,26 +35,26 @@
 TRACY_MODULE_NAME(SceDisplay);
 
 // Advanced frame pacing system for 60fps patches
-namespace {
+namespace { // This anonymous namespace isolates the FramePacer implementation
     struct FramePacer {
         std::atomic<uint32_t> pending_frames{0};
-        std::atomic<uint64_t> total_frames{0};
-        std::atomic<uint64_t> presented_frames{0};
+        std.atomic<uint64_t> total_frames{0};
+        std.atomic<uint64_t> presented_frames{0};
         std::chrono::steady_clock::time_point last_frame_time;
-        std::chrono::steady_clock::time_point start_time;
+        std.chrono::steady_clock::time_point start_time;
         std::mutex timing_mutex;
         std::deque<std::chrono::microseconds> frame_times;
         static constexpr size_t FRAME_TIME_HISTORY = 60;
         
         // Adaptive pacing parameters
-        std::atomic<int> target_pending{2};      // Optimal queue depth
-        std::atomic<int> sleep_us{100};          // Base sleep time
-        std::atomic<bool> use_precise_timing{true};
+        std.atomic<int> target_pending{2};      // Optimal queue depth
+        std.atomic<int> sleep_us{100};          // Base sleep time
+        std.atomic<bool> use_precise_timing{true};
         
         // Performance metrics
-        std::atomic<double> current_fps{0.0};
-        std::atomic<double> frame_time_variance{0.0};
-        std::atomic<int> stutter_frames{0};
+        std.atomic<double> current_fps{0.0};
+        std.atomic<double> frame_time_variance{0.0};
+        std.atomic<int> stutter_frames{0};
         
         FramePacer() : 
             last_frame_time(std::chrono::steady_clock::now()),
@@ -203,9 +203,24 @@ namespace {
         }
     };
     
-    // Global pacer instance
+    // Global pacer instance, accessible within this anonymous namespace
     FramePacer g_wipeout_pacer;
+
+    // Define notify_frame_presented within the anonymous namespace to access g_wipeout_pacer
+    void notify_frame_presented_internal() {
+        g_wipeout_pacer.on_frame_present();
+    }
+
+} // end of anonymous namespace
+
+// Expose notify_frame_presented_internal as a global function with external linkage
+// This is what display.cpp will call.
+extern void notify_frame_presented(); // Declare it before defining if needed, but it's defined below
+void notify_frame_presented() {
+    // Call the internal version within the anonymous namespace
+    notify_frame_presented_internal();
 }
+
 
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
@@ -517,9 +532,10 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
 
-// Renderer callback integration (must be outside module namespace)
-namespace display {
-     void notify_frame_presented() {
-         g_wipeout_pacer.on_frame_present();
-     }
- }
+// Renderer callback integration (global function)
+// This function needs to be available globally so display.cpp can call it.
+void notify_frame_presented() {
+    // This increments the count of frames that the host display has actually rendered.
+    // It's crucial for the FramePacer to know when frames are truly presented.
+    g_wipeout_pacer.on_frame_present();
+}

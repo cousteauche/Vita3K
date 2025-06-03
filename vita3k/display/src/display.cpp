@@ -8,21 +8,21 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE. See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <display/functions.h> // This header should declare 'notify_frame_presented' globally
+#include <display/functions.h> // This header is where 'notify_frame_presented' is declared globally
 
 #include <dialog/state.h>
 #include <display/state.h>
-#include <emuenv/state.h>
 #include <kernel/state.h>
 #include <renderer/state.h>
-#include <io/state.h> // ADDED: Include for IOState full definition
+#include <io/state.h>   // CRITICAL FIX: Include full definition of IOState here
+#include <emuenv/state.h> // CRITICAL FIX: Include emuenv/state.h AFTER io/state.h to avoid incomplete type errors
 
 #include <chrono>
 #include <motion/functions.h>

@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -18,18 +18,19 @@
 #pragma once
 
 #include <kernel/thread/thread_state.h>
-
 #include <cstdint>
 
+// Forward declarations for structures used in display functions.
 struct DisplayState;
 struct KernelState;
 struct EmuEnvState;
 struct DisplayFrameInfo;
 
+// Global function declarations (as display.cpp uses global namespace for its functions)
 void start_sync_thread(EmuEnvState &emuenv);
 void wait_vblank(DisplayState &display, KernelState &kernel, const ThreadStatePtr &wait_thread, const uint64_t target_vcount, const bool is_cb);
-// if the result is not nullptr, contain the predicted frame (pointer needs to be freed later)
 DisplayFrameInfo *predict_next_image(EmuEnvState &emuenv, Address sync_object);
 void update_prediction(EmuEnvState &emuenv, DisplayFrameInfo &frame);
 
+// <--- ADDED: Global declaration for the frame presented notification function
 void notify_frame_presented();
