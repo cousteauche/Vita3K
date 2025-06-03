@@ -3,7 +3,7 @@
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
-// the Free Software Foundation; either version 2 of the License, or
+// by the Free Software Foundation; either version 2 of the License, or
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
@@ -32,49 +32,50 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-    // WipEout 2048 Direct 60FPS Override - Iteration 3: Focusing on Display Output and Stability
-    if (emuenv.display.fps_hack &&
+    // WipEout 2048 Direct 60FPS Override - Keep original working logic
+    if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
-
-        int original_vcount = vcount; // Store original for logging
-
+        
+        // For WipEout, always use immediate return for SetFrameBuf waits
+        // This forces the game to run at max framerate from its perspective.
         if (is_since_setbuf) {
-            // For sceDisplayWaitSetFrameBuf calls (frame presentation waits):
-            // We want 60 FPS, so we ensure the game waits for exactly 1 vblank for this context.
-            // This is the core 60 FPS speedup by reducing 2-vblank waits to 1-vblank waits.
-            // Importantly: We *never* return early here, ensuring `wait_vblank` is always called.
-            vcount = 1;
-            LOG_INFO("WipEout 60FPS (SetFrameBuf wait): Adjusted vcount from {} to {}", original_vcount, vcount);
-
-        } else {
-            // For sceDisplayWaitVblankStart calls (general vblank waits):
-            // Revert to the original hack's behavior for these, as it seemed to run for a while.
-            // This keeps general Vblank synchronization as per the original "working" hack.
-            vcount = 0;
-            LOG_INFO("WipEout 60FPS (VblankStart wait): Forced vcount to 0 (was {})", original_vcount);
+            static int skip_count = 0;
+            skip_count++;
+            
+            // Log every 60 skipped frames
+            if (skip_count % 60 == 0) {
+                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits (original working hack)", skip_count);
+            }
+            
+            // Return immediately without waiting (CRITICAL for WipEout's display)
+            return SCE_DISPLAY_ERROR_OK;
         }
+        
+        // For non-SetFrameBuf waits, reduce vcount to minimum (original working hack)
+        vcount = 0;
+        LOG_INFO("WipEout 60FPS: Forced VblankStart wait vcount to 0 (original working hack)");
     }
-    // Original fps_hack code (for other games)
-    // This will only apply if the WipEout specific hack above didn't activate.
-    else if (emuenv.display.fps_hack && vcount > 1) {
+
+    // Original fps_hack code (for other games) - This applies if the WipEout-specific hack above didn't activate.
+    if (emuenv.display.fps_hack && vcount > 1) {
         vcount = 1;
+        LOG_INFO("General FPS Hack: Adjusted vcount from original >1 to 1");
     }
 
     uint64_t target_vcount;
     if (is_since_setbuf) {
         target_vcount = emuenv.display.last_setframe_vblank_count + vcount;
     } else {
-        // The wait is considered starting from the last time the thread resumed
-        // from a vblank wait (sceDisplayWait...) and not from the time this function was called.
-        // If vcount is 0, this will effectively wait until the next Vblank start.
+        // the wait is considered starting from the last time the thread resumed
+        // from a vblank wait (sceDisplayWait...) and not from the time this function was called
+        // but we still need to wait at least for one vblank
         const uint64_t next_vsync = emuenv.display.vblank_count + 1;
         const uint64_t min_vsync = thread->last_vblank_waited + vcount;
         thread->last_vblank_waited = std::max(next_vsync, min_vsync);
         target_vcount = thread->last_vblank_waited;
     }
 
-    // CRITICAL: Always call wait_vblank. This is crucial for emulator-side display synchronization.
-    // The black screen implies that `wait_vblank` (or its immediate context) is the key.
+    // This `wait_vblank` is called for non-WipEout hacks or when WipEout's `is_since_setbuf` is false.
     wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
 
     if (emuenv.display.abort.load())
@@ -146,7 +147,7 @@ EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
 EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
     
-    // WipEout 2048 FPS tracking (no change needed here, this is just logging)
+    // WipEout 2048 FPS tracking
     if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         static int frame_count = 0;
         static auto last_time = std::chrono::high_resolution_clock::now();
@@ -193,7 +194,7 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     DisplayFrameInfo &info = emuenv.display.sce_frame;
 
     info.base = pFrameBuf->base;
-    info.pitch = pFrameBuf->pitch; // *** CRITICAL CORRECTION: Ensures correct pitch is set ***
+    info.pitch = pFrameBuf->pitch; // *** CRITICAL FIX: Ensures correct pitch is used ***
     info.pixelformat = pFrameBuf->pixelformat;
     info.image_size.x = pFrameBuf->width;
     info.image_size.y = pFrameBuf->height;
@@ -201,6 +202,29 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
 
     emuenv.display.last_setframe_vblank_count = emuenv.display.vblank_count.load();
     emuenv.frame_count++;
+
+    // ***** NEW ADDITION FOR ATTEMPT 6: Introduce a micro-yield after frame submission *****
+    // This gives the emulator's rendering backend a chance to pick up the newly submitted frame
+    // before the game's thread immediately loops back (due to the `display_wait` bypass).
+    // This aims to prevent backend flooding and improve stability.
+    if (emuenv.display.fps_hack && 
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        
+        // Yield the current thread. This tells the OS scheduler: "I'm not busy right now,
+        // you can schedule other threads." This is a non-blocking way to give other threads
+        // (like the renderer) a chance to run.
+        std::this_thread::yield(); 
+
+        // If std::this_thread::yield() is not sufficient, you might need to try a very short sleep.
+        // Uncomment and experiment with values like:
+        // std::this_thread::sleep_for(std::chrono::microseconds(100)); // 100 microseconds
+        // std::this_thread::sleep_for(std::chrono::microseconds(500)); // 500 microseconds
+        // std::this_thread::sleep_for(std::chrono::milliseconds(1));  // 1 millisecond
+        // Be careful: too long a sleep will reduce overall FPS. Start small and increase if needed.
+        
+        LOG_INFO("WipEout 60FPS: Micro-yield performed after frame submission.");
+    }
+    // ***********************************************************************************
 
 #ifdef TRACY_ENABLE
     FrameMarkNamed("SCE frame buffer"); // Tracy - Secondary frame end mark for the emulated frame buffer
@@ -226,7 +250,15 @@ EXPORT(int, sceDisplayGetPrimaryHead) {
 
 EXPORT(SceInt32, sceDisplayGetRefreshRate, float *pFps) {
     TRACY_FUNC(sceDisplayGetRefreshRate, pFps);
-    *pFps = 59.94005f;
+    // Experimental: Spoof 120Hz refresh rate for WipEout if FPS hack is on.
+    // This might encourage the game to internally target 60 FPS (half of 120Hz) in gameplay.
+    if (emuenv.display.fps_hack && 
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        *pFps = 119.8801f; // Twice the standard Vita refresh rate (approx 120Hz)
+        LOG_INFO("WipEout: Reporting 120Hz refresh rate to game.");
+    } else {
+        *pFps = 59.94005f; // Standard Vita refresh rate
+    }
     return 0;
 }
 
@@ -286,24 +318,20 @@ EXPORT(SceInt32, sceDisplayWaitSetFrameBufMultiCB, SceUInt vcount) {
 
 EXPORT(SceInt32, sceDisplayWaitVblankStart) {
     TRACY_FUNC(sceDisplayWaitVblankStart);
-    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, 1, false, false);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartCB) {
     TRACY_FUNC(sceDisplayWaitVblankStartCB);
-    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, 1, false, true);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMulti, vcount);
-    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, false);
 }
 
 EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
-    // For WipEout, this will likely be overridden to vcount = 0 in display_wait
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
 }
