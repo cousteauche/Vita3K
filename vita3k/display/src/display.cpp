@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -22,7 +22,7 @@
 #include <emuenv/state.h>
 #include <kernel/state.h>
 #include <renderer/state.h>
-#include <io/state.h> // <--- ADDED: Include for IOState full definition
+#include <io/state.h> // ADDED: Include for IOState full definition
 
 #include <chrono>
 #include <motion/functions.h>
@@ -224,7 +224,11 @@ void update_display(EmuEnvState &emuenv) {
     // The specific calls from your app_init.cpp and renderer.cpp dumps were:
     // emuenv.renderer->render_frame(...);
     // emuenv.renderer->swap_window(...);
-    emuenv.renderer->render_frame(emuenv.logical_viewport_pos, emuenv.logical_viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
+    emuenv.renderer->render_frame(
+        {emuenv.logical_viewport_pos.x, emuenv.logical_viewport_pos.y}, // Corrected FVector2 to SceFVector2 conversion
+        {emuenv.logical_viewport_size.x, emuenv.logical_viewport_size.y}, // Corrected FVector2 to SceFVector2 conversion
+        emuenv.display, emuenv.gxm, emuenv.mem
+    );
     
     // Call the renderer to swap the front and back buffers, displaying the new frame on screen;
     // This is the point where the frame is effectively "presented" to the user.
