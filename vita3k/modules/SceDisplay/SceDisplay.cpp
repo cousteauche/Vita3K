@@ -8,7 +8,7 @@
 //
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY and FITNESS FOR A PARTICULAR PURPOSE.  See the
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License along
@@ -27,62 +27,225 @@
 #include <util/types.h>
 
 #include <util/tracy.h>
+#include <atomic>
+#include <deque>
+#include <cmath>
+
 TRACY_MODULE_NAME(SceDisplay);
+
+// Advanced frame pacing system for 60fps patches
+namespace {
+    struct FramePacer {
+        std::atomic<uint32_t> pending_frames{0};
+        std::atomic<uint64_t> total_frames{0};
+        std::atomic<uint64_t> presented_frames{0};
+        std::chrono::steady_clock::time_point last_frame_time;
+        std::chrono::steady_clock::time_point start_time;
+        std::mutex timing_mutex;
+        std::deque<std::chrono::microseconds> frame_times;
+        static constexpr size_t FRAME_TIME_HISTORY = 60;
+        
+        // Adaptive pacing parameters
+        std::atomic<int> target_pending{2};      // Optimal queue depth
+        std::atomic<int> sleep_us{100};          // Base sleep time
+        std::atomic<bool> use_precise_timing{true};
+        
+        // Performance metrics
+        std::atomic<double> current_fps{0.0};
+        std::atomic<double> frame_time_variance{0.0};
+        std::atomic<int> stutter_frames{0};
+        
+        FramePacer() : 
+            last_frame_time(std::chrono::steady_clock::now()),
+            start_time(std::chrono::steady_clock::now()) {}
+        
+        void on_frame_submit() {
+            pending_frames++;
+            total_frames++;
+            
+            // Track frame timing
+            auto now = std::chrono::steady_clock::now();
+            auto delta = std::chrono::duration_cast<std::chrono::microseconds>(
+                now - last_frame_time);
+            
+            {
+                std::lock_guard<std::mutex> lock(timing_mutex);
+                frame_times.push_back(delta);
+                if (frame_times.size() > FRAME_TIME_HISTORY) {
+                    frame_times.pop_front();
+                }
+                
+                // Detect stutters (frames taking > 20ms)
+                if (delta.count() > 20000) {
+                    stutter_frames++;
+                }
+            }
+            
+            last_frame_time = now;
+            
+            // Dynamic adjustment based on queue depth
+            int pending = pending_frames.load();
+            if (pending > target_pending + 2) {
+                // Way too many pending, aggressive wait
+                sleep_us = std::min(2000, sleep_us.load() + 100);
+            } else if (pending > target_pending) {
+                // Slightly too many, gentle increase
+                sleep_us = std::min(1000, sleep_us.load() + 25);
+            } else if (pending < target_pending && sleep_us > 50) {
+                // Too few, decrease wait
+                sleep_us = std::max(50, sleep_us.load() - 50);
+            }
+            
+            // Update FPS every 30 frames
+            if (total_frames % 30 == 0) {
+                update_metrics();
+            }
+        }
+        
+        void on_frame_present() {
+            if (pending_frames > 0) {
+                pending_frames--;
+            }
+            presented_frames++;
+        }
+        
+        void adaptive_wait() {
+            int pending = pending_frames.load();
+            
+            if (use_precise_timing) {
+                // Target 16.67ms frame time for 60fps
+                static constexpr auto target_frame_time = std::chrono::microseconds(16667);
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                    now - last_frame_time);
+                
+                if (elapsed < target_frame_time && pending <= target_pending) {
+                    // We're running too fast and queue is healthy
+                    auto wait_time = target_frame_time - elapsed;
+                    
+                    // High precision wait
+                    if (wait_time > std::chrono::microseconds(1000)) {
+                        std::this_thread::sleep_for(wait_time - std::chrono::microseconds(500));
+                    }
+                    
+                    // Spin wait for precision
+                    while (std::chrono::steady_clock::now() - last_frame_time < target_frame_time) {
+                        std::this_thread::yield();
+                    }
+                    return;
+                }
+            }
+            
+            // Fallback: Dynamic sleep based on queue depth
+            if (pending > target_pending) {
+                // Progressive backoff
+                int sleep_time = sleep_us * (1 + (pending - target_pending) / 2);
+                
+                // Mix of sleep and yield for better granularity
+                if (sleep_time > 500) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleep_time / 2));
+                    std::this_thread::yield();
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleep_time / 2));
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleep_time));
+                }
+            } else {
+                // Queue is healthy, just yield
+                std::this_thread::yield();
+            }
+        }
+        
+        void update_metrics() {
+            std::lock_guard<std::mutex> lock(timing_mutex);
+            
+            if (frame_times.size() < 10) return;
+            
+            // Calculate average frame time and variance
+            double sum = 0.0;
+            double sum_sq = 0.0;
+            for (const auto& ft : frame_times) {
+                double ms = ft.count() / 1000.0;
+                sum += ms;
+                sum_sq += ms * ms;
+            }
+            
+            double avg = sum / frame_times.size();
+            double variance = (sum_sq / frame_times.size()) - (avg * avg);
+            frame_time_variance = std::sqrt(variance);
+            
+            // Calculate FPS from actual presentation rate
+            auto now = std::chrono::steady_clock::now();
+            auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - start_time).count();
+            
+            if (total_time > 0) {
+                current_fps = (presented_frames.load() * 1000.0) / total_time;
+            }
+            
+            // Adjust precision timing based on variance
+            if (frame_time_variance > 5.0) {
+                // High variance, disable precision timing
+                use_precise_timing = false;
+            } else if (frame_time_variance < 2.0) {
+                // Low variance, enable precision timing
+                use_precise_timing = true;
+            }
+        }
+        
+        void log_stats() const {
+            LOG_INFO("WipEout Frame Pacing Stats:");
+            LOG_INFO("  FPS: {:.1f}, Pending: {}, Sleep: {}us", 
+                     current_fps.load(), pending_frames.load(), sleep_us.load());
+            LOG_INFO("  Frame variance: {:.2f}ms, Stutters: {}", 
+                     frame_time_variance.load(), stutter_frames.load());
+            LOG_INFO("  Precision timing: {}", use_precise_timing.load() ? "ON" : "OFF");
+        }
+    };
+    
+    // Global pacer instance
+    FramePacer g_wipeout_pacer;
+}
 
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
+    int original_vcount = vcount;
 
-    // --- FIX FOR ERROR 1: Declare original_vcount when logging it ---
-    int original_vcount = vcount; 
-    // --- END FIX ---
-
-    // WipEout 2048 Direct 60FPS Override - Keep original working logic
+    // WipEout 2048 Enhanced 60FPS Mode
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         
-        // For WipEout, always use immediate return for SetFrameBuf waits
-        // This forces the game to run at max framerate from its perspective.
         if (is_since_setbuf) {
             static int skip_count = 0;
             skip_count++;
             
-            // Log every 60 skipped frames
             if (skip_count % 60 == 0) {
-                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits (original working hack)", skip_count);
+                LOG_INFO("WipEout 60FPS: Bypassed {} frame waits", skip_count);
+                g_wipeout_pacer.log_stats();
             }
             
-            // Enhanced logging for display_wait
-            LOG_INFO("WipEout display_wait: is_since_setbuf=true, vcount={} (original hack), returning immediately.", static_cast<int>(original_vcount)); 
-            
-            // Return immediately without waiting (CRITICAL for WipEout's display)
+            // Return immediately - this is the key to 60fps
             return SCE_DISPLAY_ERROR_OK;
         }
         
-        // For non-SetFrameBuf waits, reduce vcount to minimum (original working hack)
+        // For non-SetFrameBuf waits, minimal wait
         vcount = 0;
-        LOG_INFO("WipEout display_wait: is_since_setbuf=false, vcount={} (forced to 0, original hack).", static_cast<int>(original_vcount)); 
     }
 
-    // Original fps_hack code (for other games) - This applies if the WipEout-specific hack above didn't activate.
+    // Original fps_hack for other games
     if (emuenv.display.fps_hack && vcount > 1) {
         vcount = 1;
-        LOG_INFO("General FPS Hack: Adjusted vcount from original >1 to 1.");
     }
 
     uint64_t target_vcount;
     if (is_since_setbuf) {
         target_vcount = emuenv.display.last_setframe_vblank_count + vcount;
     } else {
-        // the wait is considered starting from the last time the thread resumed
-        // from a vblank wait (sceDisplayWait...) and not from the time this function was called
-        // but we still need to wait at least for one vblank
         const uint64_t next_vsync = emuenv.display.vblank_count + 1;
         const uint64_t min_vsync = thread->last_vblank_waited + vcount;
         thread->last_vblank_waited = std::max(next_vsync, min_vsync);
         target_vcount = thread->last_vblank_waited;
     }
 
-    // This `wait_vblank` is called for non-WipEout hacks or when WipEout's `is_since_setbuf` is false.
     wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
 
     if (emuenv.display.abort.load())
@@ -154,6 +317,11 @@ EXPORT(int, _sceDisplayGetResolutionInfoInternal) {
 EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplaySetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
     
+    // Track frame submission for WipEout
+    if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        g_wipeout_pacer.on_frame_submit();
+    }
+    
     // WipEout 2048 FPS tracking
     if ((emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         static int frame_count = 0;
@@ -161,15 +329,14 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
         
         frame_count++;
         
-        // Log FPS every 60 frames
         if (frame_count % 60 == 0) {
             auto now = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
             float fps = (60.0f * 1000.0f) / duration;
             
-            // --- FIX FOR ERROR 2: Use .get(emuenv.mem) to retrieve raw pointer from Ptr<T> ---
-            LOG_INFO("WipEout FPS: {:.1f} (sync mode: {}, FrameBuf Base: 0x{:X})", fps, static_cast<int>(sync), reinterpret_cast<uintptr_t>(pFrameBuf->base.get(emuenv.mem)));
-            // --- END FIX ---
+            LOG_INFO("WipEout FPS: {:.1f} (sync: {}, base: 0x{:X})", 
+                     fps, static_cast<int>(sync), 
+                     pFrameBuf ? reinterpret_cast<uintptr_t>(pFrameBuf->base.get(emuenv.mem)) : 0);
             last_time = now;
         }
     }
@@ -195,15 +362,13 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
         return RET_ERROR(SCE_DISPLAY_ERROR_INVALID_RESOLUTION);
 
     if (sync == SCE_DISPLAY_SETBUF_IMMEDIATE) {
-        // we are supposed to swap the displayed buffer in the middle of the frame
-        // which we do not support
         STUBBED("SCE_DISPLAY_SETBUF_IMMEDIATE is not supported");
     }
 
     DisplayFrameInfo &info = emuenv.display.sce_frame;
 
     info.base = pFrameBuf->base;
-    info.pitch = pFrameBuf->pitch; // *** CRITICAL FIX: Ensures correct pitch is used ***
+    info.pitch = pFrameBuf->pitch;
     info.pixelformat = pFrameBuf->pixelformat;
     info.image_size.x = pFrameBuf->width;
     info.image_size.y = pFrameBuf->height;
@@ -212,21 +377,19 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
     emuenv.display.last_setframe_vblank_count = emuenv.display.vblank_count.load();
     emuenv.frame_count++;
 
-    // ***** NEW ADDITION FOR ATTEMPT 6: Introduce a micro-yield after frame submission *****
-    // This gives the emulator's rendering backend a chance to pick up the newly submitted frame
-    // before the game's thread immediately loops back (due to the `display_wait` bypass).
-    // This aims to prevent backend flooding and improve stability.
+    // Enhanced adaptive frame pacing for WipEout
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
         
-        std::this_thread::yield(); 
+        // Use adaptive waiting instead of simple yield
+        g_wipeout_pacer.adaptive_wait();
         
-        LOG_INFO("WipEout 60FPS: Micro-yield performed after frame submission.");
+        // Additional optimization: prefetch next frame data
+        __builtin_prefetch(pFrameBuf->base.get(emuenv.mem), 0, 3);
     }
-    // ***********************************************************************************
 
 #ifdef TRACY_ENABLE
-    FrameMarkNamed("SCE frame buffer"); // Tracy - Secondary frame end mark for the emulated frame buffer
+    FrameMarkNamed("SCE frame buffer");
 #endif
 
     return SCE_DISPLAY_ERROR_OK;
@@ -249,20 +412,36 @@ EXPORT(int, sceDisplayGetPrimaryHead) {
 
 EXPORT(SceInt32, sceDisplayGetRefreshRate, float *pFps) {
     TRACY_FUNC(sceDisplayGetRefreshRate, pFps);
-    // Experimental: Spoof 120Hz refresh rate for WipEout if FPS hack is on.
-    // This might encourage the game to internally target 60 FPS (half of 120Hz) in gameplay.
+    
+    // Enhanced: Report variable refresh rate for WipEout when fps_hack is on
     if (emuenv.display.fps_hack && 
         (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
-        *pFps = 119.8801f; // Twice the standard Vita refresh rate (approx 120Hz)
-        LOG_INFO("WipEout: Reporting 120Hz refresh rate to game.");
+        
+        // Report current achieved FPS to encourage game to adapt
+        float current = g_wipeout_pacer.current_fps.load();
+        if (current > 55.0f && current < 65.0f) {
+            *pFps = current;  // Report actual FPS when close to 60
+        } else {
+            *pFps = 119.8801f;  // Otherwise report 120Hz to encourage 60fps target
+        }
+        
+        LOG_INFO("WipEout: Reporting {:.1f}Hz refresh rate", *pFps);
     } else {
-        *pFps = 59.94005f; // Standard Vita refresh rate
+        *pFps = 59.94005f;  // Standard Vita refresh rate
     }
     return 0;
 }
 
 EXPORT(SceInt32, sceDisplayGetVcount) {
     TRACY_FUNC(sceDisplayGetVcount);
+    
+    // For WipEout with fps_hack, simulate faster vcount increment
+    if (emuenv.display.fps_hack && 
+        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
+        // Double the vcount rate to simulate 120Hz display
+        return static_cast<SceInt32>((emuenv.display.vblank_count.load() * 2) & 0xFFFF);
+    }
+    
     return static_cast<SceInt32>(emuenv.display.vblank_count.load()) & 0xFFFF;
 }
 
@@ -333,4 +512,11 @@ EXPORT(SceInt32, sceDisplayWaitVblankStartMulti, SceUInt vcount) {
 EXPORT(SceInt32, sceDisplayWaitVblankStartMultiCB, SceUInt vcount) {
     TRACY_FUNC(sceDisplayWaitVblankStartMultiCB, vcount);
     return display_wait(emuenv, thread_id, static_cast<int>(vcount), false, true);
+}
+
+// Renderer callback integration (call this from renderer when frame is presented)
+namespace display {
+    void notify_frame_presented() {
+        g_wipeout_pacer.on_frame_present();
+    }
 }
