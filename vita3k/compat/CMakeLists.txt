@@ -7,5 +7,12 @@ add_library(
 )
 
 target_include_directories(compat PUBLIC include)
-target_link_libraries(compat PUBLIC gui emuenv)
+
+# GUI library - conditional
+if(NOT VITA3K_NO_GUI)
+	target_link_libraries(compat PUBLIC gui emuenv)
+else()
+	target_link_libraries(compat PUBLIC emuenv)
+endif()
+
 target_link_libraries(compat PRIVATE pugixml::pugixml miniz)

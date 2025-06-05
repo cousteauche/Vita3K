@@ -18,9 +18,15 @@
 #pragma once
 
 #include <cstdint>
-#include <imgui.h>
 #include <map>
 #include <string>
+
+#ifdef VITA3K_NO_GUI
+#include <vita3k_gui_stubs.h>
+#else
+#include <imgui.h>
+#include <gui/imgui_impl_sdl.h>
+#endif
 
 namespace compat {
 

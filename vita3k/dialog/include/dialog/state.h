@@ -1,3 +1,6 @@
+// File: vita3k/dialog/include/dialog/state.h
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -18,11 +21,10 @@
 #pragma once
 
 #include <dialog/types.h>
-
 #include <io/vfs.h>
-
 #include <lang/state.h>
 
+// VITA3K_NO_GUI: Always define DialogType enum
 enum DialogType {
     NO_DIALOG,
     IME_DIALOG,
@@ -31,6 +33,73 @@ enum DialogType {
     SAVEDATA_DIALOG,
     NETCHECK_DIALOG
 };
+
+#ifdef VITA3K_NO_GUI
+// VITA3K_NO_GUI: Minimal stub implementations for GUI-free build
+
+struct ImeState {
+    char title[SCE_IME_DIALOG_MAX_TITLE_LENGTH];
+    uint32_t max_length;
+    bool multiline;
+    bool cancelable;
+    uint16_t *result;
+    char text[SCE_IME_DIALOG_MAX_TEXT_LENGTH];
+    int32_t status;
+};
+
+struct MsgState {
+    int32_t mode;
+    std::string message;
+    uint8_t btn_num;
+    std::string btn[3];
+    uint32_t btn_val[3];
+    uint32_t status;
+    uint32_t bar_percent = 0;
+    bool has_progress_bar = false;
+};
+
+struct TrophyState {
+    uint32_t tick;
+};
+
+struct SavedataState {
+    uint8_t btn_num = 0;
+    std::string btn[2];
+    uint32_t btn_val[2];
+    uint32_t button_id = SCE_SAVEDATA_DIALOG_BUTTON_ID_INVALID;
+
+    // VITA3K_NO_GUI: Include icon vectors for GUI-free build (as stubs)
+    std::vector<vfs::FileBuffer> icon_buffer;
+    std::vector<uintptr_t> icon_texture; // VITA3K_NO_GUI: Stub - uintptr_t instead of ImTextureID
+
+    uint32_t mode;
+    uint32_t mode_to_display;
+
+    uint32_t display_type;
+    std::vector<uint32_t> slot_id;
+    std::vector<SceSaveDataDialogSlotInfo> slot_info;
+    Ptr<void> userdata;
+
+    std::string msg;
+    std::vector<std::string> title;
+    std::vector<std::string> subtitle;
+    std::vector<std::string> details;
+    std::vector<SceDateTime> date;
+    std::vector<bool> has_date = { false };
+
+    uint32_t bar_percent = 0;
+    bool has_progress_bar = false;
+
+    std::vector<SceAppUtilSaveDataSlotEmptyParam *> list_empty_param = { nullptr };
+    uint32_t slot_list_size = 0;
+    uint32_t list_style;
+    std::string list_title;
+    uint32_t selected_save = 0;
+    bool draw_info_window = false;
+};
+
+#else
+// VITA3K_NO_GUI: Original GUI implementation
 
 struct ImeState {
     char title[SCE_IME_DIALOG_MAX_TITLE_LENGTH];
@@ -92,6 +161,9 @@ struct SavedataState {
     bool draw_info_window = false;
 };
 
+#endif // VITA3K_NO_GUI
+
+// VITA3K_NO_GUI: Always define DialogState - core structure for both builds
 struct DialogState {
     DialogLangState lang;
     DialogType type = NO_DIALOG;

@@ -13,8 +13,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
 
-option(USE_DISCORD_RICH_PRESENCE "Build Vita3K with Discord Rich Presence" ON)
-option(USE_VITA3K_UPDATE "Build Vita3K with updater." ON)
+# Add GUI-free build option
+option(VITA3K_NO_GUI "Build without ImGui interface" ON)
+
+# Discord is disabled always
+set(USE_DISCORD_RICH_PRESENCE OFF)
+
+# Updater only available with GUI
+if(NOT VITA3K_NO_GUI)
+    option(USE_VITA3K_UPDATE "Build Vita3K with updater." OFF)
+else()
+    set(USE_VITA3K_UPDATE OFF)
+endif()
+
 option(BUILD_APPIMAGE "Build an AppImage." OFF)
 
 option(FORCE_BUILD_OPENSSL_MAC OFF)
@@ -61,6 +72,13 @@ if (NOT (USE_LTO STREQUAL "NEVER"))
 	endif()
 endif()
 
+# Add compile definition for GUI-free build
+if(VITA3K_NO_GUI)
+    add_compile_definitions(VITA3K_NO_GUI)
+    message(STATUS "Building Vita3K without GUI (pure SDL/Vulkan window)")
+    # Add vita3k directory to include path for stub header
+    include_directories(${CMAKE_SOURCE_DIR}/vita3k)
+endif()
 
 ############################
 ########## Boost ###########

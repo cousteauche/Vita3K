@@ -14,7 +14,6 @@ add_library(
 	src/gl/texture_formats.cpp
 	src/gl/texture.cpp
 	src/gl/uniforms.cpp
-
 	src/vulkan/allocator.cpp
 	src/vulkan/context.cpp
 	src/vulkan/creation.cpp
@@ -27,14 +26,12 @@ add_library(
 	src/vulkan/surface_cache.cpp
 	src/vulkan/sync_state.cpp
 	src/vulkan/texture.cpp
-
 	src/texture/cache.cpp
 	src/texture/format.cpp
 	src/texture/palette.cpp
 	src/texture/pvrt-dec.cpp
 	src/texture/replacement.cpp
 	src/texture/yuv.cpp
-
 	src/batch.cpp
 	src/creation.cpp
 	src/renderer.cpp
@@ -44,10 +41,16 @@ add_library(
 	src/sync.cpp
 	src/transfer.cpp
 )
-
 target_include_directories(renderer PUBLIC include)
-target_link_libraries(renderer PUBLIC display mem stb shader glutil threads config util vkutil)
-target_link_libraries(renderer PRIVATE ddspp sdl2 stb ffmpeg xxHash::xxhash concurrentqueue)
+target_link_libraries(renderer PUBLIC display mem shader glutil threads config util vkutil)
+
+# STB library - conditional
+if(NOT VITA3K_NO_GUI)
+	target_link_libraries(renderer PUBLIC stb)
+	target_link_libraries(renderer PRIVATE stb)
+endif()
+
+target_link_libraries(renderer PRIVATE ddspp sdl2 ffmpeg xxHash::xxhash concurrentqueue)
 
 # Marshmallow Tracy linking
 if(TRACY_ENABLE_ON_CORE_COMPONENTS)

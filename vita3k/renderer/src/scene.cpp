@@ -33,9 +33,15 @@
 
 #define DEBUG_FRAMEBUFFER 1
 
-#if DEBUG_FRAMEBUFFER
+#if DEBUG_FRAMEBUFFER && !defined(VITA3K_NO_GUI)
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
+#elif DEBUG_FRAMEBUFFER && defined(VITA3K_NO_GUI)
+// VITA3K_NO_GUI: STB function stub for debug framebuffer
+static int stbi_write_png(const char *filename, int w, int h, int comp, const void *data, int stride_in_bytes) {
+    LOG_WARN_ONCE("Debug framebuffer save not supported in GUI-free build");
+    return 0;
+}
 #endif
 
 namespace renderer {

@@ -13,7 +13,14 @@ target_link_libraries(app PUBLIC emuenv mem)
 if(USE_DISCORD_RICH_PRESENCE)
   target_link_libraries(app PUBLIC discord-rpc)
 endif()
-target_link_libraries(app PRIVATE audio config display gdbstub gui io ngs renderer)
+
+# GUI library - conditional
+if(NOT VITA3K_NO_GUI)
+	target_link_libraries(app PRIVATE audio config display gdbstub gui io ngs renderer)
+else()
+	target_link_libraries(app PRIVATE audio config display gdbstub io ngs renderer)
+endif()
+
 if(WIN32)
 	target_link_libraries(app PRIVATE dwmapi)
 endif()

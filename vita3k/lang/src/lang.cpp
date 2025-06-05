@@ -1,3 +1,6 @@
+// File: vita3k/lang/src/lang.cpp
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -19,10 +22,13 @@
 #include <lang/state.h>
 
 #include <config/state.h>
+#ifndef VITA3K_NO_GUI
 #include <dialog/state.h>
 #include <gui/state.h>
 #include <ime/state.h>
+#endif
 #include <util/fs.h>
+#include <util/log.h>
 #include <util/vector_utils.h>
 
 #include <pugixml.hpp>
@@ -35,8 +41,10 @@ static const std::vector<std::string> list_user_lang_static = {
 
 void init_lang(LangState &lang, EmuEnvState &emuenv) {
     lang = {};
+#ifndef VITA3K_NO_GUI
     emuenv.common_dialog.lang = {};
     emuenv.ime.lang = {};
+#endif
 
     const auto set_lang = [&](const std::string &language) {
         lang.user_lang[GUI] = language;
@@ -111,6 +119,7 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                     }
                 };
 
+#ifndef VITA3K_NO_GUI
                 // Main Menu Bar
                 const auto main_menubar = lang_child.child("main_menubar");
                 if (!main_menubar.empty()) {
@@ -151,11 +160,14 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                     // Time Used
                     set_lang_string(lang.app_context.time_used, app_context.child("time_used"));
                 }
+#endif
 
                 // Common
                 const auto common = lang_child.child("common");
                 if (!common.empty()) {
+#ifndef VITA3K_NO_GUI
                     set_lang_string(emuenv.common_dialog.lang.common, common);
+#endif
                     set_lang_string(lang.common.main, common);
 
                     const auto set_calendar = [](std::vector<std::string> &dest, const pugi::xml_node child) {
@@ -182,6 +194,7 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                     set_calendar(lang.common.small_mday, common.child("small_mday"));
                 }
 
+#ifndef VITA3K_NO_GUI
                 // Compatibility
                 const auto compatibility_child = lang_child.child("compatibility");
                 if (!compatibility_child.empty()) {
@@ -224,10 +237,12 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
 
                 // Controls
                 set_lang_string(lang.controls, lang_child.child("controls"));
+#endif
 
                 // Dialog
                 const auto dialog = lang_child.child("dialog");
                 if (!dialog.empty()) {
+#ifndef VITA3K_NO_GUI
                     // Trophy
                     set_lang_string(emuenv.common_dialog.lang.trophy, dialog.child("trophy"));
 
@@ -247,8 +262,10 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
                         // Save
                         set_lang_string(lang_save_data.save, save_data.child("save"));
                     }
+#endif
                 }
 
+#ifndef VITA3K_NO_GUI
                 // Game Data
                 set_lang_string(lang.game_data, lang_child.child("game_data"));
 
@@ -416,6 +433,7 @@ void init_lang(LangState &lang, EmuEnvState &emuenv) {
 
                 // Welcome
                 set_lang_string(lang.welcome, lang_child.child("welcome"));
+#endif
             }
         } else {
             LOG_ERROR("Error open lang file xml: {}", lang_xml_path);

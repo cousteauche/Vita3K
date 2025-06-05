@@ -23,6 +23,10 @@
 
 #include <util/lock_and_find.h>
 
+#ifndef VITA3K_NO_GUI
+#include <gui/functions.h>
+#endif
+
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceIme);
 
@@ -67,7 +71,12 @@ EXPORT(SceInt32, sceImeOpen, SceImeParam *param) {
     default: break;
     }
 
+#ifndef VITA3K_NO_GUI
     gui::init_ime_lang(emuenv.ime, static_cast<SceImeLanguage>(emuenv.cfg.current_ime_lang));
+#else
+    // VITA3K_NO_GUI: Skip IME language initialization
+    LOG_DEBUG("IME language initialization skipped in GUI-free build");
+#endif
 
     emuenv.ime.edit_text.str = emuenv.ime.param.inputTextBuffer;
     emuenv.ime.param.inputTextBuffer = Ptr<SceWChar16>(alloc(emuenv.mem, SCE_IME_MAX_PREEDIT_LENGTH + emuenv.ime.param.maxTextLength + 1, "ime_str"));

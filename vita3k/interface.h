@@ -36,25 +36,34 @@ inline void delete_zip(mz_zip_archive *zip) {
     delete zip;
 }
 
+// VITA3K_NO_GUI: Restored correct ArchiveContents structure from original
 struct ArchiveContents {
-    std::optional<float> count;
-    std::optional<float> current;
-    std::optional<float> progress;
+    std::string name;
+    std::string title;
+    struct Progress {
+        float percent;
+    } progress;
 };
 
+// VITA3K_NO_GUI: ContentInfo definition for GUI-free build
 struct ContentInfo {
     std::string title;
     std::string title_id;
     std::string category;
     std::string content_id;
-    std::string path;
-    bool state = false;
+    fs::path path;
+    bool state;
 };
 
 bool handle_events(EmuEnvState &emuenv, GuiState &gui);
 
-std::vector<ContentInfo> install_archive(EmuEnvState &emuenv, GuiState *gui, const fs::path &archive_path, const std::function<void(ArchiveContents)> &progress_callback = nullptr);
-uint32_t install_contents(EmuEnvState &emuenv, GuiState *gui, const fs::path &path);
-
 ExitCode load_app(int32_t &main_module_id, EmuEnvState &emuenv);
 ExitCode run_app(EmuEnvState &emuenv, int32_t main_module_id);
+
+std::vector<ContentInfo> install_archive(EmuEnvState &emuenv, GuiState *gui, const fs::path &archive_path, const std::function<void(ArchiveContents)> &progress_callback = {});
+uint32_t install_contents(EmuEnvState &emuenv, GuiState *gui, const fs::path &path);
+
+bool install_pkg(const fs::path &pkg_path, EmuEnvState &emuenv, GuiState *gui, const std::function<void(ArchiveContents)> &progress_callback, std::string &app_path);
+bool copy_license(EmuEnvState &emuenv, const fs::path &license_path);
+
+// REMOVED: Duplicate install_pup declaration to resolve ambiguity with packages/functions.h

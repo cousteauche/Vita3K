@@ -5,6 +5,17 @@ set(VITA3K_APP_VER_MID 2)
 set(VITA3K_APP_VER_LO 0)
 set(VITA3K_APP_VERSION "v${VITA3K_APP_VER_HI}.${VITA3K_APP_VER_MID}.${VITA3K_APP_VER_LO}")
 
+# VITA3K_NO_GUI option for GUI-free builds
+option(VITA3K_NO_GUI "Build Vita3K without GUI support" OFF)
+
+# Set compiler definition if GUI-free build is enabled
+if(VITA3K_NO_GUI)
+    add_definitions(-DVITA3K_NO_GUI)
+    message(STATUS "Building Vita3K without GUI support")
+else()
+    message(STATUS "Building Vita3K with GUI support")
+endif()
+
 execute_process(
 	COMMAND git rev-list HEAD --count
 	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -101,7 +112,10 @@ add_subdirectory(dialog)
 add_subdirectory(display)
 add_subdirectory(features)
 add_subdirectory(glutil)
-add_subdirectory(gui)
+# GUI subdirectory - conditional
+if(NOT VITA3K_NO_GUI)
+	add_subdirectory(gui)
+endif()
 add_subdirectory(gxm)
 add_subdirectory(host)
 add_subdirectory(ime)
@@ -137,7 +151,14 @@ if(WIN32)
 	target_sources(vita3k PRIVATE util/src/vc_runtime_checker.cpp)
 endif()
 
-target_link_libraries(vita3k PRIVATE app config cppcommon ctrl display gdbstub gui gxm io miniz modules packages patch renderer shader touch util)
+# Core libraries (always linked)
+target_link_libraries(vita3k PRIVATE app config cppcommon ctrl dialog display gdbstub gxm io miniz modules packages patch renderer shader touch util)
+
+# GUI library - conditional
+if(NOT VITA3K_NO_GUI)
+	target_link_libraries(vita3k PRIVATE gui)
+endif()
+
 if(USE_DISCORD_RICH_PRESENCE)
 	target_link_libraries(vita3k PRIVATE discord-rpc)
 endif()
@@ -249,7 +270,10 @@ elseif(LINUX)
 	endif()
 elseif(WIN32)
 	target_link_libraries(vita3k PRIVATE Version)
-	target_sources(vita3k PRIVATE resource.h Vita3K.ico Vita3K.rc Windows.manifest)
+	# Windows resources - conditional for GUI
+	if(NOT VITA3K_NO_GUI)
+		target_sources(vita3k PRIVATE resource.h Vita3K.ico Vita3K.rc Windows.manifest)
+	endif()
 	set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT vita3k)
 	set_target_properties(vita3k PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$(Configuration)")
 	add_custom_command(

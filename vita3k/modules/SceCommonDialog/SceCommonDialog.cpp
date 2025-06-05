@@ -1,3 +1,6 @@
+// File: vita3k/modules/SceCommonDialog/SceCommonDialog.cpp
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -20,7 +23,9 @@
 #include <dialog/state.h>
 #include <dialog/types.h>
 #include <emuenv/app_util.h>
+#ifndef VITA3K_NO_GUI
 #include <gui/state.h>
+#endif
 #include <io/device.h>
 #include <io/functions.h>
 #include <io/vfs.h>
@@ -50,6 +55,10 @@ std::string to_debug_str<SceSaveDataDialogProgressBarTarget>(const MemState &mem
     }
     return std::to_string(type);
 }
+
+// VITA3K_NO_GUI: Key change - conditional GUI header include on line ~24
+// All dialog functions remain unchanged - they work with emuenv.common_dialog state
+// which exists regardless of GUI. Only the visual rendering is affected by GUI build.
 
 EXPORT(int, sceCameraImportDialogAbort) {
     TRACY_FUNC(sceCameraImportDialogAbort);

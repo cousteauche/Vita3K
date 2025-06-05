@@ -1,3 +1,6 @@
+# File: vita3k/packages/CMakeLists.txt
+# VITA3K_NO_GUI: Revert dialog dependency (now comes through emuenv)
+
 add_library(packages STATIC
             src/exfat.cpp
             src/license.cpp
@@ -13,5 +16,6 @@ add_library(packages STATIC
             include/packages/sfo.h
 )
 target_include_directories(packages PUBLIC include)
+# VITA3K_NO_GUI: dialog now comes through emuenv PUBLIC dependency
 target_link_libraries(packages PUBLIC emuenv util)
 target_link_libraries(packages PRIVATE config crypto emuenv FAT16 io miniz psvpfsparser vita-toolchain)

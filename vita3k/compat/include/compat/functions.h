@@ -1,3 +1,6 @@
+// File: vita3k/compat/include/compat/functions.h
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -18,11 +21,19 @@
 #pragma once
 
 #include <emuenv/state.h>
+#ifndef VITA3K_NO_GUI
 #include <gui/state.h>
+#endif
 
 namespace compat {
 
+#ifdef VITA3K_NO_GUI
+// VITA3K_NO_GUI: GUI-free function signatures
+bool load_app_compat_db(EmuEnvState &emuenv);
+bool update_app_compat_db(EmuEnvState &emuenv);
+#else
 bool load_app_compat_db(GuiState &gui, EmuEnvState &emuenv);
 bool update_app_compat_db(GuiState &gui, EmuEnvState &emuenv);
+#endif
 
 } // namespace compat

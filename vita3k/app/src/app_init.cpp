@@ -1,3 +1,6 @@
+// File: vita3k/app/src/app_init.cpp
+// VITA3K_NO_GUI: Modified for GUI-free build - HEADERS SECTION ONLY
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -23,8 +26,10 @@
 #include <config/version.h>
 #include <display/state.h>
 #include <emuenv/state.h>
+#ifndef VITA3K_NO_GUI
 #include <gui/imgui_impl_sdl.h>
 #include <gui/state.h>
+#endif
 #include <io/functions.h>
 #include <kernel/state.h>
 #include <ngs/state.h>
@@ -39,11 +44,24 @@
 #include <app/discord.h>
 #endif
 
+#ifdef VITA3K_NO_GUI
+// VITA3K_NO_GUI: Stub header for GUI-free build
+// Note: This header should contain minimal ImGui stubs
+// #include <vita3k_gui_stubs.h>
+#else
+// VITA3K_NO_GUI: Original GUI includes preserved
+// NOTE: Duplicate include removed - already included above conditionally
+#endif
+
 #include <gdbstub/functions.h>
 
 #include <SDL.h>
 #include <SDL_video.h>
 #include <SDL_vulkan.h>
+
+
+// File: vita3k/app/src/app_init.cpp
+// VITA3K_NO_GUI: Clean ImGui stubs fix - REPLACE LINES 69-112
 
 #ifdef _WIN32
 #include <SDL_syswm.h>
@@ -53,6 +71,29 @@
 #ifdef __LINUX__
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
+#endif
+
+#ifdef VITA3K_NO_GUI
+// VITA3K_NO_GUI: Forward declarations and stubs for GUI-free build
+namespace ImGui {
+    struct ImGuiIO { float FontGlobalScale; const char* IniFilename; };
+    ImGuiIO& GetIO();
+    void* GetCurrentContext();
+    void CreateContext();
+}
+void ImGui_ImplSdl_Shutdown(void* imgui);
+
+// VITA3K_NO_GUI: FontScaleCandidates definition (from gui/state.h)
+const float FontScaleCandidates[] = { 1.f, 1.5f, 2.f };
+
+// VITA3K_NO_GUI: Stub implementations
+namespace ImGui {
+    static ImGuiIO stub_io = {1.0f, nullptr};
+    ImGuiIO& GetIO() { return stub_io; }
+    void* GetCurrentContext() { return nullptr; }
+    void CreateContext() {}
+}
+void ImGui_ImplSdl_Shutdown(void* imgui) {}
 #endif
 
 namespace app {
@@ -82,7 +123,9 @@ void update_viewport(EmuEnvState &state) {
     state.drawable_size.y = h;
 
     state.system_dpi_scale = static_cast<float>(state.drawable_size.x) / state.window_size.x;
+    #ifndef VITA3K_NO_GUI
     ImGui::GetIO().FontGlobalScale = 1.f * state.manual_dpi_scale;
+    #endif
 
     if (h > 0) {
         const float window_aspect = static_cast<float>(w) / h;
@@ -368,11 +411,14 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
 #endif
     LOG_INFO("User pref path: {}", state.pref_path);
 
+#ifndef VITA3K_NO_GUI
     if (ImGui::GetCurrentContext() == NULL) {
         ImGui::CreateContext();
     }
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL;
+#endif
+
 
     state.backend_renderer = renderer::Backend::Vulkan;
 
@@ -500,7 +546,9 @@ bool late_init(EmuEnvState &state) {
 }
 
 void destroy(EmuEnvState &emuenv, ImGui_State *imgui) {
+#ifndef VITA3K_NO_GUI
     ImGui_ImplSdl_Shutdown(imgui);
+#endif
 
 #ifdef USE_DISCORD
     discordrpc::shutdown();

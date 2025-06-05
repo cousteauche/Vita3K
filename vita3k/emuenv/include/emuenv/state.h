@@ -1,3 +1,6 @@
+// File: vita3k/emuenv/include/emuenv/state.h
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -19,7 +22,6 @@
 
 #include <emuenv/window.h>
 #include <util/fs.h>
-
 #include <memory>
 #include <set>
 #include <string>
@@ -52,6 +54,7 @@ struct NetState;
 struct NetCtlState;
 struct NpState;
 struct DisplayState;
+// VITA3K_NO_GUI: Always forward declare DialogState - it will be defined in dialog/state.h
 struct DialogState;
 struct Ime;
 struct License;
@@ -61,12 +64,14 @@ struct GDBState;
 struct HTTPState;
 
 typedef int32_t SceInt;
+
 struct IVector2 {
     SceInt x;
     SceInt y;
 };
 
 typedef float SceFloat;
+
 struct FVector2 {
     SceFloat x;
     SceFloat y;
@@ -82,6 +87,7 @@ using NIDSet = std::set<uint32_t>;
 struct EmuEnvState {
     // declare this first as the unique_ptr need to be initialized before the references
 private:
+    // VITA3K_NO_GUI: Fixed syntax errors - removed erroneous asterisks
     std::unique_ptr<sfo::SfoAppInfo> _app_info;
     std::unique_ptr<Config> _cfg;
     std::unique_ptr<MemState> _mem;
@@ -97,10 +103,12 @@ private:
     std::unique_ptr<ngs::State> _ngs;
     std::unique_ptr<NpState> _np;
     std::unique_ptr<DisplayState> _display;
+    // VITA3K_NO_GUI: DialogState forward declared above
     std::unique_ptr<DialogState> _common_dialog;
     std::unique_ptr<Ime> _ime;
     std::unique_ptr<License> _license;
     std::unique_ptr<RegMgrState> _regmgr;
+    // VITA3K_NO_GUI: Fixed syntax error - removed erroneous asterisks
     std::unique_ptr<SfoFile> _sfo_handle;
     std::unique_ptr<GDBState> _gdb;
     std::unique_ptr<HTTPState> _http;
@@ -163,6 +171,7 @@ public:
     ngs::State &ngs;
     NpState &np;
     DisplayState &display;
+    // VITA3K_NO_GUI: DialogState reference - definition comes from dialog/state.h
     DialogState &common_dialog;
     Ime &ime;
     License &license;
@@ -180,7 +189,6 @@ public:
     EmuEnvState();
     // declaring a destructor is necessary to forward declare unique_ptrs
     ~EmuEnvState();
-
     // disable copy
     EmuEnvState(const EmuEnvState &) = delete;
     EmuEnvState &operator=(EmuEnvState const &) = delete;

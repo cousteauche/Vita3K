@@ -1,3 +1,6 @@
+# File: vita3k/modules/CMakeLists.txt
+# VITA3K_NO_GUI: Modified for GUI-free build - Added regmgr library
+
 set(SOURCE_LIST
 	module_parent.cpp
 	SceAppMgr/SceAppMgr.cpp
@@ -212,6 +215,15 @@ set(SOURCE_LIST
 
 add_library(modules STATIC ${SOURCE_LIST})
 target_include_directories(modules PUBLIC include)
-target_link_libraries(modules PRIVATE audio codec ctrl dialog display dlmalloc gui gxm kernel mem motion net ngs np ssl packages patch printf renderer rtc sdl2 touch xxHash::xxhash)
+
+# GUI library - conditional
+if(NOT VITA3K_NO_GUI)
+	target_link_libraries(modules PRIVATE audio codec ctrl dialog display dlmalloc gui gxm kernel mem motion net ngs np ssl packages patch printf regmgr renderer rtc sdl2 touch xxHash::xxhash)
+else()
+	target_link_libraries(modules PRIVATE audio codec ctrl dialog display dlmalloc gxm kernel mem motion net ngs np ssl packages patch printf regmgr renderer rtc sdl2 touch xxHash::xxhash)
+endif()
+
 target_link_libraries(modules PUBLIC module)
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_LIST})
+
+# VITA3K_NO_GUI: Added regmgr to target_link_libraries PRIVATE list for SceRegistryMgr modules

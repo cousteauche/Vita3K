@@ -1,3 +1,6 @@
+// File: vita3k/main.cpp
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -20,11 +23,8 @@
 #include <app/functions.h>
 #include <config/functions.h>
 #include <config/version.h>
-#include <dialog/state.h>
 #include <display/state.h>
 #include <emuenv/state.h>
-#include <gui/functions.h>
-#include <gui/state.h>
 #include <include/cpu.h>
 #include <include/environment.h>
 #include <io/state.h>
@@ -40,6 +40,10 @@
 #include <shader/spirv_recompiler.h>
 #include <util/log.h>
 #include <util/string_utils.h>
+
+#ifdef VITA3K_NO_GUI
+#include "gui_stubs.h"
+#endif
 
 #if USE_DISCORD
 #include <app/discord.h>
@@ -172,6 +176,13 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
+#ifdef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Force console mode for GUI-free build
+    cfg.console = true;
+    cfg.show_gui = false;
+    if (logging::init(root_paths, false) != Success)
+        return InitConfigFailed;
+#else
     if (cfg.console) {
         cfg.show_gui = false;
         if (logging::init(root_paths, false) != Success)
@@ -197,6 +208,7 @@ int main(int argc, char *argv[]) {
         }
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     }
+#endif
 
     LOG_INFO("{}", window_title);
     LOG_INFO("OS: {}", CppCommon::Environment::OSVersion());
@@ -208,10 +220,19 @@ int main(int argc, char *argv[]) {
         run_type = app::AppRunType::Extracted;
 
     if (!app::init(emuenv, cfg, root_paths)) {
+#ifdef VITA3K_NO_GUI
+        LOG_ERROR("Emulated environment initialization failed.");
+#else
         app::error_dialog("Emulated environment initialization failed.", emuenv.window.get());
+#endif
         return 1;
     }
 
+#ifdef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Skip GUI initialization and controller setup
+    init_libraries(emuenv);
+    GuiState gui; // Stub instance
+#else
     if (emuenv.cfg.controller_binds.empty() || (emuenv.cfg.controller_binds.size() != 15))
         gui::reset_controller_binding(emuenv);
 
@@ -235,9 +256,14 @@ int main(int argc, char *argv[]) {
         gui::init(gui, emuenv);
         app::update_viewport(emuenv);
     }
+#endif
 
     if (cfg.content_path.has_value()) {
+#ifdef VITA3K_NO_GUI
+        auto gui_ptr = nullptr;
+#else
         auto gui_ptr = cfg.console ? nullptr : &gui;
+#endif
         const auto extention = string_utils::tolower(cfg.content_path->extension().string());
         const auto is_archive = (extention == ".vpk") || (extention == ".zip");
         const auto is_rif = (extention == ".rif") || (extention == "work.bin");
@@ -264,20 +290,34 @@ int main(int argc, char *argv[]) {
                 LOG_ERROR("File dropped: [{}] is not supported.", *cfg.content_path);
 
             emuenv.cfg.content_path.reset();
+#ifndef VITA3K_NO_GUI
             if (!cfg.console)
                 gui::init_home(gui, emuenv);
+#endif
         }
     }
 
     if (run_type == app::AppRunType::Extracted) {
         emuenv.io.app_path = cfg.run_app_path ? *cfg.run_app_path : emuenv.app_info.app_title_id;
+#ifdef VITA3K_NO_GUI
+        // VITA3K_NO_GUI: Skip GUI app initialization
+        LOG_INFO("Initializing app: {}", emuenv.io.app_path);
+#else
         gui::init_user_app(gui, emuenv, emuenv.io.app_path);
+#endif
         if (emuenv.cfg.run_app_path.has_value())
             emuenv.cfg.run_app_path.reset();
         else if (emuenv.cfg.content_path.has_value())
             emuenv.cfg.content_path.reset();
     }
 
+#ifdef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Skip GUI main loop, require app to be specified
+    if (run_type == app::AppRunType::Unknown) {
+        LOG_ERROR("No application specified for GUI-free build. Use -r <app_path> to run an application.");
+        return 1;
+    }
+#else
     if (!cfg.console) {
 #if USE_DISCORD
         auto discord_rich_presence_old = emuenv.cfg.discord_rich_presence;
@@ -325,6 +365,7 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+#endif
 
     // When backend render is changed before boot app, reboot emu in new backend render and run app
     if (emuenv.renderer->current_backend != emuenv.backend_renderer) {
@@ -333,6 +374,39 @@ int main(int argc, char *argv[]) {
         return Success;
     }
 
+#ifdef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Create app data for GUI-free build
+    std::string app_ver = "1.00";
+    std::string category = "gd";
+    bool addcont = false;
+    std::string content_id = "";
+    bool savedata = false;
+    std::string title = "Unknown App";
+    std::string stitle = "App";
+    std::string title_id = emuenv.io.app_path;
+    
+    // Try to read app info from param.sfo if available
+    vfs::FileBuffer param_sfo;
+    if (vfs::read_app_file(param_sfo, emuenv.pref_path, emuenv.io.app_path, "sce_sys/param.sfo")) {
+        sfo::SfoAppInfo sfo_info;
+        sfo::get_param_info(sfo_info, param_sfo, emuenv.cfg.sys_lang);
+        if (!sfo_info.app_title.empty()) title = sfo_info.app_title;
+        if (!sfo_info.app_title_id.empty()) title_id = sfo_info.app_title_id;
+        if (!sfo_info.app_version.empty()) app_ver = sfo_info.app_version;
+        if (!sfo_info.app_category.empty()) category = sfo_info.app_category;
+    }
+    
+    emuenv.app_info.app_version = app_ver;
+    emuenv.app_info.app_category = category;
+    emuenv.io.addcont = addcont;
+    emuenv.io.content_id = content_id;
+    emuenv.io.savedata = savedata;
+    emuenv.current_app_title = title;
+    emuenv.app_info.app_short_title = stitle;
+    emuenv.io.title_id = title_id;
+    
+    LOG_INFO("Loading app: {} ({})", emuenv.current_app_title, emuenv.io.title_id);
+#else
     gui::set_config(gui, emuenv, emuenv.io.app_path);
 
     const auto APP_INDEX = gui::get_app_index(gui, emuenv.io.app_path);
@@ -344,6 +418,7 @@ int main(int argc, char *argv[]) {
     emuenv.current_app_title = APP_INDEX->title;
     emuenv.app_info.app_short_title = APP_INDEX->stitle;
     emuenv.io.title_id = APP_INDEX->title_id;
+#endif
 
     // Check license for PS App Only
     get_license(emuenv, emuenv.io.title_id, emuenv.io.content_id);
@@ -355,18 +430,27 @@ int main(int argc, char *argv[]) {
             return main_thread->status == ThreadStatus::dormant;
         });
         return Success;
+#ifndef VITA3K_NO_GUI
     } else {
         gui.imgui_state->do_clear_screen = false;
+#endif
     }
 
+#ifndef VITA3K_NO_GUI
     gui::init_app_background(gui, emuenv, emuenv.io.app_path);
     gui::update_last_time_app_used(gui, emuenv, emuenv.io.app_path);
+#endif
 
     if (!app::late_init(emuenv)) {
+#ifdef VITA3K_NO_GUI
+        LOG_ERROR("Failed to initialize Vita3K");
+#else
         app::error_dialog("Failed to initialize Vita3K", emuenv.window.get());
+#endif
         return 1;
     }
 
+#ifndef VITA3K_NO_GUI
     const auto draw_app_background = [](GuiState &gui, EmuEnvState &emuenv) {
         const auto pos_min = ImVec2(emuenv.logical_viewport_pos.x, emuenv.logical_viewport_pos.y);
         const auto pos_max = ImVec2(pos_min.x + emuenv.logical_viewport_size.x, pos_min.y + emuenv.logical_viewport_size.y);
@@ -378,6 +462,7 @@ int main(int argc, char *argv[]) {
         else
             gui::draw_background(gui, emuenv);
     };
+#endif
 
     int32_t main_module_id;
     {
@@ -385,13 +470,22 @@ int main(int argc, char *argv[]) {
         if (err != Success)
             return err;
     }
+#ifndef VITA3K_NO_GUI
     gui.vita_area.information_bar = false;
+#endif
 
     // Pre-Compile Shaders
     emuenv.renderer->set_app(emuenv.io.title_id.c_str(), emuenv.self_name.c_str());
     if (renderer::get_shaders_cache_hashs(*emuenv.renderer) && cfg.shader_cache) {
+#ifdef VITA3K_NO_GUI
+        LOG_INFO("Compiling {} cached shaders...", emuenv.renderer->shaders_cache_hashs.size());
+#else
         SDL_SetWindowTitle(emuenv.window.get(), fmt::format("{} | {} ({}) | Please wait, compiling shaders...", window_title, emuenv.current_app_title, emuenv.io.title_id).c_str());
+#endif
         for (const auto &hash : emuenv.renderer->shaders_cache_hashs) {
+#ifdef VITA3K_NO_GUI
+            emuenv.renderer->precompile_shader(hash);
+#else
             handle_events(emuenv, gui);
             gui::draw_begin(gui, emuenv);
             draw_app_background(gui, emuenv);
@@ -401,6 +495,7 @@ int main(int argc, char *argv[]) {
 
             gui::draw_end(gui);
             emuenv.renderer->swap_window(emuenv.window.get());
+#endif
         }
     }
     {
@@ -408,6 +503,28 @@ int main(int argc, char *argv[]) {
         if (err != Success)
             return err;
     }
+#ifdef VITA3K_NO_GUI
+    LOG_INFO("Application {} ({}) loaded successfully", emuenv.current_app_title, emuenv.io.title_id);
+    
+    // VITA3K_NO_GUI: Direct boot - skip Live Area waiting and start emulation immediately
+    LOG_INFO("Starting direct emulation (bypassing Live Area)...");
+    
+    // Jump directly to main emulation loop without waiting for frame_count
+    while (handle_events(emuenv, gui) && !emuenv.load_exec) {
+        ZoneScopedN("Game rendering"); // Tracy - Track game rendering loop scope
+        
+        // Driver acto!
+        renderer::process_batches(*emuenv.renderer.get(), emuenv.renderer->features, emuenv.mem, emuenv.cfg);
+
+        const SceFVector2 viewport_pos = { emuenv.drawable_viewport_pos.x, emuenv.drawable_viewport_pos.y };
+        const SceFVector2 viewport_size = { emuenv.drawable_viewport_size.x, emuenv.drawable_viewport_size.y };
+        emuenv.renderer->render_frame(viewport_pos, viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
+        
+        // Calculate FPS
+        app::calculate_fps(emuenv);
+        FrameMark; // Tracy - Frame end mark for game rendering loop
+    }
+#else
     SDL_SetWindowTitle(emuenv.window.get(), fmt::format("{} | {} ({}) | Please wait, loading...", window_title, emuenv.current_app_title, emuenv.io.title_id).c_str());
 
     while (handle_events(emuenv, gui) && (emuenv.frame_count == 0) && !emuenv.load_exec) {
@@ -464,13 +581,18 @@ int main(int argc, char *argv[]) {
         emuenv.renderer->swap_window(emuenv.window.get());
         FrameMark; // Tracy - Frame end mark for game rendering loop
     }
+#endif
 
 #ifdef _WIN32
     CoUninitialize();
 #endif
 
     emuenv.renderer->preclose_action();
+#ifdef VITA3K_NO_GUI
+    app::destroy(emuenv, nullptr);
+#else
     app::destroy(emuenv, gui.imgui_state.get());
+#endif
 
     if (emuenv.load_exec)
         run_execv(argv, emuenv);

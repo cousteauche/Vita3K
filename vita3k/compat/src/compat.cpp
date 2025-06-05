@@ -1,3 +1,6 @@
+// File: vita3k/compat/src/compat.cpp
+// VITA3K_NO_GUI: Modified for GUI-free build
+
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -15,15 +18,18 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <config/state.h>
-
 #include <compat/functions.h>
 #include <compat/state.h>
 
+#ifndef VITA3K_NO_GUI
 #include <dialog/state.h>
+#endif
 #include <emuenv/state.h>
+#ifndef VITA3K_NO_GUI
 #include <gui/state.h>
+#endif
 
+#include <util/log.h>
 #include <util/net_utils.h>
 
 #include <miniz.h>
@@ -45,6 +51,7 @@ static std::string db_updated_at;
 static const uint32_t db_version = 1;
 static uint32_t db_issue_count = 0;
 
+#ifndef VITA3K_NO_GUI
 std::map<CompatibilityState, ImVec4> CompatState::compat_color{
     { UNKNOWN, ImVec4(0.54f, 0.54f, 0.54f, 1.f) },
     { NOTHING, ImVec4(1.00f, 0.00f, 0.00f, 1.f) }, // #ff0000
@@ -55,6 +62,7 @@ std::map<CompatibilityState, ImVec4> CompatState::compat_color{
     { INGAME_MORE, ImVec4(1.00f, 0.84f, 0.00f, 1.f) }, // #ffd700
     { PLAYABLE, ImVec4(0.05f, 0.54f, 0.09f, 1.f) }, // #0e8a16
 };
+#endif
 
 static bool extract_zip_file(const char *zip_filename, const fs::path &output_path) {
     // Open the ZIP file for reading
@@ -91,6 +99,18 @@ static bool extract_zip_file(const char *zip_filename, const fs::path &output_pa
     return true;
 }
 
+#ifdef VITA3K_NO_GUI
+// VITA3K_NO_GUI: Stub implementation for GUI-free build
+bool load_app_compat_db(EmuEnvState &emuenv) {
+    LOG_INFO("Compatibility database loading disabled in GUI-free build");
+    return false;
+}
+
+bool update_app_compat_db(EmuEnvState &emuenv) {
+    LOG_INFO("Compatibility database updating disabled in GUI-free build");
+    return false;
+}
+#else
 bool load_app_compat_db(GuiState &gui, EmuEnvState &emuenv) {
     const auto app_compat_db_path = emuenv.cache_path / "app_compat_db.xml";
     if (!fs::exists(app_compat_db_path)) {
@@ -244,5 +264,6 @@ bool update_app_compat_db(GuiState &gui, EmuEnvState &emuenv) {
 
     return true;
 }
+#endif
 
 } // namespace compat
