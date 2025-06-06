@@ -522,41 +522,67 @@ int main(int argc, char *argv[]) {
 #ifdef VITA3K_NO_GUI
     LOG_INFO("Application {} ({}) loaded successfully", emuenv.current_app_title, emuenv.io.title_id);
     
-    // VITA3K_NO_GUI: Direct boot with proper two-phase initialization
-    LOG_INFO("Starting direct emulation (bypassing Live Area)...");
-    LOG_INFO("Waiting for application initialization...");
+    // VITA3K_NO_GUI: Test basic window functionality first
+    LOG_INFO("Starting GUI-free build with basic window management...");
+    LOG_INFO("Entering main emulation loop...");
     
-    // First loop: Wait for initial frame setup (equivalent to GUI loading phase)
-    while (handle_events(emuenv, gui) && (emuenv.frame_count == 0) && !emuenv.load_exec) {
-        ZoneScopedN("Game initialization"); // Tracy - Track game initialization scope
-        
-        // Driver acto!
-        renderer::process_batches(*emuenv.renderer.get(), emuenv.renderer->features, emuenv.mem, emuenv.cfg);
-
-        const SceFVector2 viewport_pos = { emuenv.drawable_viewport_pos.x, emuenv.drawable_viewport_pos.y };
-        const SceFVector2 viewport_size = { emuenv.drawable_viewport_size.x, emuenv.drawable_viewport_size.y };
-        emuenv.renderer->render_frame(viewport_pos, viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
-        
-        FrameMark; // Tracy - Frame end mark for initialization loop
-    }
+    bool running = true;
+    int frame_counter = 0;
     
-    LOG_INFO("Application initialized, starting main emulation loop...");
-    
-    // Second loop: Main emulation loop (same as GUI version but without GUI drawing)
-    while (handle_events(emuenv, gui) && !emuenv.load_exec) {
+    while (running && !emuenv.load_exec) {
         ZoneScopedN("Game rendering"); // Tracy - Track game rendering loop scope
         
-        // Driver acto!
-        renderer::process_batches(*emuenv.renderer.get(), emuenv.renderer->features, emuenv.mem, emuenv.cfg);
-
-        const SceFVector2 viewport_pos = { emuenv.drawable_viewport_pos.x, emuenv.drawable_viewport_pos.y };
-        const SceFVector2 viewport_size = { emuenv.drawable_viewport_size.x, emuenv.drawable_viewport_size.y };
-        emuenv.renderer->render_frame(viewport_pos, viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
+        // VITA3K_NO_GUI: Essential SDL event handling
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                LOG_INFO("Received SDL_QUIT, exiting emulation loop");
+                running = false;
+                break;
+            }
+            if (event.type == SDL_WINDOWEVENT) {
+                if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
+                    LOG_INFO("Received window close, exiting emulation loop");
+                    running = false;
+                    break;
+                }
+                if (event.window.event == SDL_WINDOWEVENT_EXPOSED || 
+                    event.window.event == SDL_WINDOWEVENT_RESIZED) {
+                    LOG_INFO("Window needs refresh");
+                    app::update_viewport(emuenv);
+                }
+            }
+        }
         
-        // Calculate FPS
-        app::calculate_fps(emuenv);
+        // VITA3K_NO_GUI: BASIC window refresh - just clear to black
+        // This should prevent the ghost window issue
+        if (emuenv.renderer) {
+            // Just swap buffers to keep window alive - no game rendering yet
+            emuenv.renderer->swap_window(emuenv.window.get());
+        }
+        
+        // Update frame counter
+        frame_counter++;
+        
+        // VITA3K_NO_GUI: Log progress periodically
+        if (frame_counter % 300 == 0) { // Every 5 seconds at 60fps
+            LOG_INFO("GUI-free window test running... Frame: {}", frame_counter);
+        }
+        
+        // VITA3K_NO_GUI: Timeout for testing
+        if (frame_counter > 600) { // 10 seconds at 60fps
+            LOG_INFO("Window test completed - 10 seconds without ghost window");
+            running = false;
+            break;
+        }
+        
+        // Maintain 60fps timing
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        
         FrameMark; // Tracy - Frame end mark for game rendering loop
     }
+    
+    LOG_INFO("Window test ended successfully after {} frames", frame_counter);
 #else
     SDL_SetWindowTitle(emuenv.window.get(), fmt::format("{} | {} ({}) | Please wait, loading...", window_title, emuenv.current_app_title, emuenv.io.title_id).c_str());
 
@@ -600,35 +626,35 @@ int main(int argc, char *argv[]) {
         if (emuenv.cfg.performance_overlay && !emuenv.kernel.is_threads_paused() && (emuenv.common_dialog.status != SCE_COMMON_DIALOG_STATUS_RUNNING)) {
             ImGui::PushFont(gui.vita_font[emuenv.current_font_level]);
             gui::draw_perf_overlay(gui, emuenv);
-            ImGui::PopFont();
-        }
-
-        if (emuenv.cfg.current_config.show_touchpad_cursor && !emuenv.kernel.is_threads_paused())
-            gui::draw_touchpad_cursor(emuenv);
-
-        if (emuenv.display.imgui_render) {
-           gui::draw_ui(gui, emuenv);
+           ImGui::PopFont();
        }
 
-       gui::draw_end(gui);
-       emuenv.renderer->swap_window(emuenv.window.get());
-       FrameMark; // Tracy - Frame end mark for game rendering loop
-   }
+       if (emuenv.cfg.current_config.show_touchpad_cursor && !emuenv.kernel.is_threads_paused())
+           gui::draw_touchpad_cursor(emuenv);
+
+       if (emuenv.display.imgui_render) {
+          gui::draw_ui(gui, emuenv);
+      }
+
+      gui::draw_end(gui);
+      emuenv.renderer->swap_window(emuenv.window.get());
+      FrameMark; // Tracy - Frame end mark for game rendering loop
+  }
 #endif
 
 #ifdef _WIN32
-   CoUninitialize();
+  CoUninitialize();
 #endif
 
-   emuenv.renderer->preclose_action();
+  emuenv.renderer->preclose_action();
 #ifdef VITA3K_NO_GUI
-   app::destroy(emuenv, nullptr);
+  app::destroy(emuenv, nullptr);
 #else
-   app::destroy(emuenv, gui.imgui_state.get());
+  app::destroy(emuenv, gui.imgui_state.get());
 #endif
 
-   if (emuenv.load_exec)
-       run_execv(argv, emuenv);
+  if (emuenv.load_exec)
+      run_execv(argv, emuenv);
 
-   return Success;
+  return Success;
 }
