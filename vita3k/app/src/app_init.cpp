@@ -1,5 +1,5 @@
 // File: vita3k/app/src/app_init.cpp
-// VITA3K_NO_GUI: Modified for GUI-free build - HEADERS SECTION ONLY
+// VITA3K_NO_GUI: Modified for GUI-free build
 
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
@@ -58,10 +58,6 @@
 #include <SDL.h>
 #include <SDL_video.h>
 #include <SDL_vulkan.h>
-
-
-// File: vita3k/app/src/app_init.cpp
-// VITA3K_NO_GUI: Clean ImGui stubs fix - REPLACE LINES 69-112
 
 #ifdef _WIN32
 #include <SDL_syswm.h>
@@ -419,7 +415,6 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
     io.IniFilename = NULL;
 #endif
 
-
     state.backend_renderer = renderer::Backend::Vulkan;
 
     if (string_utils::toupper(state.cfg.backend_renderer) == "OPENGL") {
@@ -451,6 +446,11 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
         window_type |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     }
 
+#ifdef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Create hidden window for GUI-free builds to support renderer
+    //window_type |= SDL_WINDOW_HIDDEN;
+#endif
+
 #ifdef __LINUX__
     if (SDL_GetCurrentVideoDriver() && std::string(SDL_GetCurrentVideoDriver()) == "x11") {
         // X11 does not provide High DPI support, so manually set the High DPI scale
@@ -477,7 +477,29 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
     DwmSetWindowAttribute(wm_info.info.win.window, DWMWA_WINDOW_CORNER_PREFERENCE, &window_preference, sizeof(window_preference));
 #endif
 
+    // VITA3K_NO_GUI: Initialize renderer for both GUI and GUI-free builds
     // initialize the renderer first because we need to know if we need a page table
+#ifdef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Always initialize renderer for GUI-free builds
+    if (renderer::init(state.window.get(), state.renderer, state.backend_renderer, state.cfg, root_paths)) {
+        update_viewport(state);
+    } else {
+        switch (state.backend_renderer) {
+        case renderer::Backend::OpenGL:
+            LOG_ERROR("Could not create OpenGL context!\nDoes your GPU at least support OpenGL 4.4?");
+            break;
+
+        case renderer::Backend::Vulkan:
+            LOG_ERROR("Could not create Vulkan context!\nDoes your device support Vulkan?");
+            break;
+
+        default:
+            LOG_ERROR("Unknown backend renderer: {}.", state.cfg.backend_renderer);
+            break;
+        }
+        return false;
+    }
+#else
     if (!state.cfg.console) {
         if (renderer::init(state.window.get(), state.renderer, state.backend_renderer, state.cfg, root_paths)) {
             update_viewport(state);
@@ -498,6 +520,7 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
             return false;
         }
     }
+#endif
 
     if (!init(state.io, state.cache_path, state.log_path, state.pref_path, state.cfg.console)) {
         LOG_ERROR("Failed to initialize file system for the emulator!");

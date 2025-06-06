@@ -1,4 +1,4 @@
-// File: vita3k/main.cpp
+// File: vita3k/src/main.cpp
 // VITA3K_NO_GUI: Modified for GUI-free build
 
 // Vita3K emulator project
@@ -177,11 +177,18 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef VITA3K_NO_GUI
-    // VITA3K_NO_GUI: Force console mode for GUI-free build
+    // VITA3K_NO_GUI: Initialize SDL for GUI-free build (minimal graphics context required)
     cfg.console = true;
     cfg.show_gui = false;
-    if (logging::init(root_paths, false) != Success)
-        return InitConfigFailed;
+    // VITA3K_NO_GUI: CRITICAL FIX - Do NOT call logging::init again - already initialized at line 101
+    
+    // VITA3K_NO_GUI: Initialize SDL with minimal requirements for renderer
+    std::atexit(SDL_Quit);
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
+        LOG_ERROR("SDL initialisation failed for GUI-free build: {}", SDL_GetError());
+        return SDLInitFailed;
+    }
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 #else
     if (cfg.console) {
         cfg.show_gui = false;
@@ -214,10 +221,16 @@ int main(int argc, char *argv[]) {
     LOG_INFO("OS: {}", CppCommon::Environment::OSVersion());
     LOG_INFO("CPU: {} | {} Threads | {} GHz", CppCommon::CPU::Architecture(), CppCommon::CPU::LogicalCores(), static_cast<float>(CppCommon::CPU::ClockSpeed()) / 1000.f);
     LOG_INFO("Available ram memory: {} MiB", SDL_GetSystemRAM());
+    
+    // VITA3K_NO_GUI: Debug logging to identify config issue
+    LOG_INFO("DEBUG: cfg.run_app_path = {}", cfg.run_app_path ? *cfg.run_app_path : "EMPTY");
 
     app::AppRunType run_type = app::AppRunType::Unknown;
     if (cfg.run_app_path)
         run_type = app::AppRunType::Extracted;
+    
+    // VITA3K_NO_GUI: Debug logging to verify run_type
+    LOG_INFO("DEBUG: run_type = {}", static_cast<int>(run_type));
 
     if (!app::init(emuenv, cfg, root_paths)) {
 #ifdef VITA3K_NO_GUI
@@ -298,11 +311,12 @@ int main(int argc, char *argv[]) {
     }
 
     if (run_type == app::AppRunType::Extracted) {
-        emuenv.io.app_path = cfg.run_app_path ? *cfg.run_app_path : emuenv.app_info.app_title_id;
 #ifdef VITA3K_NO_GUI
-        // VITA3K_NO_GUI: Skip GUI app initialization
+        // VITA3K_NO_GUI: Ensure app_path is set correctly for GUI-free builds
+        emuenv.io.app_path = *cfg.run_app_path;
         LOG_INFO("Initializing app: {}", emuenv.io.app_path);
 #else
+        emuenv.io.app_path = cfg.run_app_path ? *cfg.run_app_path : emuenv.app_info.app_title_id;
         gui::init_user_app(gui, emuenv, emuenv.io.app_path);
 #endif
         if (emuenv.cfg.run_app_path.has_value())
@@ -368,7 +382,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     // When backend render is changed before boot app, reboot emu in new backend render and run app
-    if (emuenv.renderer->current_backend != emuenv.backend_renderer) {
+    if (emuenv.renderer && emuenv.renderer->current_backend != emuenv.backend_renderer) {
         emuenv.load_app_path = emuenv.io.app_path;
         run_execv(argv, emuenv);
         return Success;
@@ -423,6 +437,8 @@ int main(int argc, char *argv[]) {
     // Check license for PS App Only
     get_license(emuenv, emuenv.io.title_id, emuenv.io.content_id);
 
+#ifndef VITA3K_NO_GUI
+    // VITA3K_NO_GUI: Move console waiting logic to non-GUI builds only
     if (cfg.console) {
         auto main_thread = emuenv.kernel.get_thread(emuenv.main_thread_id);
         auto lock = std::unique_lock<std::mutex>(main_thread->mutex);
@@ -430,11 +446,10 @@ int main(int argc, char *argv[]) {
             return main_thread->status == ThreadStatus::dormant;
         });
         return Success;
-#ifndef VITA3K_NO_GUI
     } else {
         gui.imgui_state->do_clear_screen = false;
-#endif
     }
+#endif
 
 #ifndef VITA3K_NO_GUI
     gui::init_app_background(gui, emuenv, emuenv.io.app_path);
@@ -503,13 +518,31 @@ int main(int argc, char *argv[]) {
         if (err != Success)
             return err;
     }
+
 #ifdef VITA3K_NO_GUI
     LOG_INFO("Application {} ({}) loaded successfully", emuenv.current_app_title, emuenv.io.title_id);
     
-    // VITA3K_NO_GUI: Direct boot - skip Live Area waiting and start emulation immediately
+    // VITA3K_NO_GUI: Direct boot with proper two-phase initialization
     LOG_INFO("Starting direct emulation (bypassing Live Area)...");
+    LOG_INFO("Waiting for application initialization...");
     
-    // Jump directly to main emulation loop without waiting for frame_count
+    // First loop: Wait for initial frame setup (equivalent to GUI loading phase)
+    while (handle_events(emuenv, gui) && (emuenv.frame_count == 0) && !emuenv.load_exec) {
+        ZoneScopedN("Game initialization"); // Tracy - Track game initialization scope
+        
+        // Driver acto!
+        renderer::process_batches(*emuenv.renderer.get(), emuenv.renderer->features, emuenv.mem, emuenv.cfg);
+
+        const SceFVector2 viewport_pos = { emuenv.drawable_viewport_pos.x, emuenv.drawable_viewport_pos.y };
+        const SceFVector2 viewport_size = { emuenv.drawable_viewport_size.x, emuenv.drawable_viewport_size.y };
+        emuenv.renderer->render_frame(viewport_pos, viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
+        
+        FrameMark; // Tracy - Frame end mark for initialization loop
+    }
+    
+    LOG_INFO("Application initialized, starting main emulation loop...");
+    
+    // Second loop: Main emulation loop (same as GUI version but without GUI drawing)
     while (handle_events(emuenv, gui) && !emuenv.load_exec) {
         ZoneScopedN("Game rendering"); // Tracy - Track game rendering loop scope
         
@@ -574,28 +607,28 @@ int main(int argc, char *argv[]) {
             gui::draw_touchpad_cursor(emuenv);
 
         if (emuenv.display.imgui_render) {
-            gui::draw_ui(gui, emuenv);
-        }
+           gui::draw_ui(gui, emuenv);
+       }
 
-        gui::draw_end(gui);
-        emuenv.renderer->swap_window(emuenv.window.get());
-        FrameMark; // Tracy - Frame end mark for game rendering loop
-    }
+       gui::draw_end(gui);
+       emuenv.renderer->swap_window(emuenv.window.get());
+       FrameMark; // Tracy - Frame end mark for game rendering loop
+   }
 #endif
 
 #ifdef _WIN32
-    CoUninitialize();
+   CoUninitialize();
 #endif
 
-    emuenv.renderer->preclose_action();
+   emuenv.renderer->preclose_action();
 #ifdef VITA3K_NO_GUI
-    app::destroy(emuenv, nullptr);
+   app::destroy(emuenv, nullptr);
 #else
-    app::destroy(emuenv, gui.imgui_state.get());
+   app::destroy(emuenv, gui.imgui_state.get());
 #endif
 
-    if (emuenv.load_exec)
-        run_execv(argv, emuenv);
+   if (emuenv.load_exec)
+       run_execv(argv, emuenv);
 
-    return Success;
+   return Success;
 }
