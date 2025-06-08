@@ -439,7 +439,6 @@ void init_app_background(GuiState &gui, EmuEnvState &emuenv, const std::string &
     const auto APP_INDEX = get_app_index(gui, app_path);
     int32_t width = 0;
     int32_t height = 0;
-// ... continuing from init_app_background
 
    vfs::FileBuffer buffer;
 
@@ -995,37 +994,37 @@ void SetTooltipEx(const char *tooltip) {
     if (ImGui::IsItemHovered()) {
         if (!ImGui::BeginTooltip())
             return;
-        ImGui::PushTextWrapPos(ImGui::GetIO().DisplaySize.x - ImGui::GetStyle().WindowPadding.x * 2);
-        ImGui::Text("%s", tooltip);
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
-    }
+       ImGui::PushTextWrapPos(ImGui::GetIO().DisplaySize.x - ImGui::GetStyle().WindowPadding.x * 2);
+       ImGui::Text("%s", tooltip);
+       ImGui::PopTextWrapPos();
+       ImGui::EndTooltip();
+   }
 }
 
 void TextColoredCentered(const ImVec4 &col, const char *text) {
-    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) * 0.5f);
-    ImGui::TextColored(col, "%s", text);
+   ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) * 0.5f);
+   ImGui::TextColored(col, "%s", text);
 }
 
 void TextCentered(const char *text) {
-    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) * 0.5f);
-    ImGui::Text("%s", text);
+   ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(text).x) * 0.5f);
+   ImGui::Text("%s", text);
 }
 
 void TextColoredCentered(const ImVec4 &col, const char *text, float wrap_width) {
-    const auto window_width = ImGui::GetWindowWidth();
-    ImGui::PushTextWrapPos(window_width - wrap_width);
-    ImGui::SetCursorPosX((window_width - ImGui::CalcTextSize(text, nullptr, false, window_width - 2.f * wrap_width).x) * 0.5f);
-    ImGui::TextColored(col, "%s", text);
-    ImGui::PopTextWrapPos();
+   const auto window_width = ImGui::GetWindowWidth();
+   ImGui::PushTextWrapPos(window_width - wrap_width);
+   ImGui::SetCursorPosX((window_width - ImGui::CalcTextSize(text, nullptr, false, window_width - 2.f * wrap_width).x) * 0.5f);
+   ImGui::TextColored(col, "%s", text);
+   ImGui::PopTextWrapPos();
 }
 
 void TextCentered(const char *text, float wrap_width) {
-    const auto window_width = ImGui::GetWindowWidth();
-    ImGui::PushTextWrapPos(window_width - wrap_width);
-    ImGui::SetCursorPosX((window_width - ImGui::CalcTextSize(text, nullptr, false, window_width - 2.f * wrap_width).x) * 0.5f);
-    ImGui::Text("%s", text);
-    ImGui::PopTextWrapPos();
+   const auto window_width = ImGui::GetWindowWidth();
+   ImGui::PushTextWrapPos(window_width - wrap_width);
+   ImGui::SetCursorPosX((window_width - ImGui::CalcTextSize(text, nullptr, false, window_width - 2.f * wrap_width).x) * 0.5f);
+   ImGui::Text("%s", text);
+   ImGui::PopTextWrapPos();
 }
 
 } // namespace gui

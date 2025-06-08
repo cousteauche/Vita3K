@@ -1,3 +1,4 @@
+# File: vita3k/corey/CMakeLists.txt
 # VITA3K_NO_GUI: Corey - Minimal GUI variant for Vita3K
 add_library(
 	corey
@@ -8,6 +9,7 @@ add_library(
 	include/gui/imgui_impl_sdl_vulkan.h
 	include/gui/imgui_impl_sdl.h
 	include/gui/state.h
+	include/corey/corey_perf.h
 	src/app_context_menu.cpp
 	src/archive_install_dialog.cpp
 	src/common_dialog.cpp
@@ -49,6 +51,8 @@ add_library(
 	src/vita3k_update.cpp
 	src/welcome_dialog.cpp
 	src/corey_perf.cpp
+	src/corey_config.cpp
+	src/corey_window.cpp
 )
 
 target_include_directories(corey PUBLIC include ${CMAKE_SOURCE_DIR}/vita3k)
