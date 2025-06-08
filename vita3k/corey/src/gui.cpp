@@ -863,8 +863,9 @@ void draw_vita_area(GuiState &gui, EmuEnvState &emuenv) {
 
 void draw_ui(GuiState &gui, EmuEnvState &emuenv) {
     ImGui::PushFont(gui.vita_font[emuenv.current_font_level]);
-    if ((gui.vita_area.home_screen || !emuenv.io.app_path.empty()) && get_sys_apps_state(gui) && !gui.vita_area.live_area_screen && !gui.vita_area.user_management && (!emuenv.cfg.show_info_bar || !gui.vita_area.information_bar))
-        draw_main_menu_bar(gui, emuenv);
+    // Menu bar disabled for minimal GUI build
+    // if ((gui.vita_area.home_screen || !emuenv.io.app_path.empty()) && get_sys_apps_state(gui) && !gui.vita_area.live_area_screen && !gui.vita_area.user_management && (!emuenv.cfg.show_info_bar || !gui.vita_area.information_bar))
+    //     draw_main_menu_bar(gui, emuenv);
 
     if (gui.configuration_menu.custom_settings_dialog || gui.configuration_menu.settings_dialog)
         draw_settings_dialog(gui, emuenv);
