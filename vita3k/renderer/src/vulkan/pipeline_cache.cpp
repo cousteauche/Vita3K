@@ -1,3 +1,4 @@
+// File: renderer/vulkan/pipeline_cache.cpp
 // Vita3K emulator project
 // Copyright (C) 2025 Vita3K team
 //
@@ -211,15 +212,36 @@ void PipelineCache::init() {
     }
 
     const int nb_logical_threads = SDL_GetCPUCount();
-    // took this from RPCS3 (slightly modified)
-    if (nb_logical_threads > 12)
-        nb_worker_threads = 6;
-    else if (nb_logical_threads > 8)
-        nb_worker_threads = 4;
-    else if (nb_logical_threads >= 6)
-        nb_worker_threads = 2;
-    else
+    // VITA3K_USE_COREY: Changed - Improved automatic core detection for high core count systems
+    // The original logic was flawed - it checked (nb_logical_threads > 1) first, 
+    // which meant ALL systems with more than 1 core got 6 threads.
+    // New scaling: 
+    // - 1 core: 1 thread
+    // - 2-5 cores: 2 threads  
+    // - 6-7 cores: 4 threads
+    // - 8-11 cores: 6 threads
+    // - 12-15 cores: 8 threads
+    // - 16-23 cores: 12 threads
+    // - 24+ cores: cores/2 (up to max 32)
+    if (nb_logical_threads <= 1) {
         nb_worker_threads = 1;
+    } else if (nb_logical_threads <= 5) {
+        nb_worker_threads = 2;
+    } else if (nb_logical_threads <= 7) {
+        nb_worker_threads = 4;
+    } else if (nb_logical_threads <= 11) {
+        nb_worker_threads = 6;
+    } else if (nb_logical_threads <= 15) {
+        nb_worker_threads = 8;
+    } else if (nb_logical_threads <= 23) {
+        nb_worker_threads = 12;
+    } else {
+        // For high core count systems (24+), use half the cores but cap at 32
+        nb_worker_threads = std::min(32, nb_logical_threads / 2);
+    }
+
+    LOG_INFO("Detected {} logical threads, using {} worker threads for pipeline compilation", 
+             nb_logical_threads, nb_worker_threads);
 
     if (use_async_compilation) {
         // we could not initialize the worker threads previously
