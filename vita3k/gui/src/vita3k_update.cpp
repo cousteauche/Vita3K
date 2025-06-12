@@ -84,7 +84,6 @@ bool init_vita3k_update(GuiState &gui) {
     const auto has_update = dif_from_current > 0;
     if (has_update) {
         std::thread get_commit_desc([dif_from_current]() {
-        std::thread get_commit_desc([dif_from_current]() {
             // Reset cancel and thread running variable
             cancel_thread = false;
             thread_running = true;
