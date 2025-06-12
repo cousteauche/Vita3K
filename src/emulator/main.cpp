@@ -410,8 +410,14 @@ int main(int argc, char *argv[]) {
     }
     SDL_SetWindowTitle(emuenv.window.get(), fmt::format("{} | {} ({}) | Please wait, loading...", window_title, emuenv.current_app_title, emuenv.io.title_id).c_str());
 
-    while (handle_events(emuenv, gui) && (emuenv.frame_count == 0) && !emuenv.load_exec) {
+while (handle_events(emuenv, gui) && (emuenv.frame_count == 0) && !emuenv.load_exec) {
         ZoneScopedN("Game loading"); // Tracy - Track game loading loop scope
+        
+        // FPS limiting - start timing
+        std::chrono::steady_clock::time_point frame_start;
+        if (emuenv.cfg.fps_limit) {
+            frame_start = std::chrono::steady_clock::now();
+        }
         // Driver acto!
         renderer::process_batches(*emuenv.renderer.get(), emuenv.renderer->features, emuenv.mem, emuenv.cfg);
 
@@ -419,9 +425,21 @@ int main(int argc, char *argv[]) {
         const SceFVector2 viewport_size = { emuenv.drawable_viewport_size.x, emuenv.drawable_viewport_size.y };
         emuenv.renderer->render_frame(viewport_pos, viewport_size, emuenv.display, emuenv.gxm, emuenv.mem);
 
-        gui::draw_begin(gui, emuenv);
+gui::draw_begin(gui, emuenv);
         gui::draw_common_dialog(gui, emuenv);
         draw_app_background(gui, emuenv);
+        
+        // FPS limiting - end timing and sleep if needed
+        if (emuenv.cfg.fps_limit) {
+            constexpr double full_second = 1000000.0; // microseconds
+            const std::chrono::microseconds TARGET_TIME{ static_cast<uint32_t>(full_second / emuenv.cfg.desired_fps) };
+            auto frame_end = std::chrono::steady_clock::now();
+            auto frame_processing_time = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
+            if (frame_processing_time < TARGET_TIME) {
+                auto frame_idle_time = TARGET_TIME - frame_processing_time;
+                std::this_thread::sleep_for(frame_idle_time);
+            }
+        }
 
         gui::draw_end(gui);
         emuenv.renderer->swap_window(emuenv.window.get());

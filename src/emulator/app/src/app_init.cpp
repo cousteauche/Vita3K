@@ -464,17 +464,27 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
     }
 #endif
 
-    return true;
+return true;
 }
 
 bool late_init(EmuEnvState &state) {
+    // Initialize vsync if enabled
+    if (state.cfg.v_sync) {
+        // Try adaptive vsync first, falling back to regular vsync
+        if (SDL_GL_SetSwapInterval(-1) < 0) {
+            SDL_GL_SetSwapInterval(1);
+        }
+    }
+    
     // note: mem is not initialized yet but that's not an issue
     // the renderer is not using it yet, just storing it for later uses
     state.renderer->late_init(state.cfg, state.app_path, state.mem);
-
     if (!init(state.mem, state.renderer->need_page_table)) {
         LOG_ERROR("Failed to initialize memory for emulator state!");
         return false;
+    }
+    if (state.mem.use_page_table && state.kernel.cpu_backend == CPUBackend::Unicorn)
+        LOG_CRITICAL("Unicorn backend is not supported with a page table");
     }
 
     if (state.mem.use_page_table && state.kernel.cpu_backend == CPUBackend::Unicorn)

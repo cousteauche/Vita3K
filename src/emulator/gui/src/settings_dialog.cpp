@@ -905,13 +905,16 @@ void draw_settings_dialog(GuiState &gui, EmuEnvState &emuenv) {
             ImGui::Combo(lang.emulator["position"].c_str(), &emuenv.cfg.performance_overlay_position, LIST_OVERLAY_POSITION, IM_ARRAYSIZE(LIST_OVERLAY_POSITION));
             SetTooltipEx(lang.emulator["select_position"].c_str());
         }
-        ImGui::Spacing();
-#ifndef _WIN32
+        ImGui::Spacing();#ifndef _WIN32
         ImGui::Checkbox(lang.emulator["case_insensitive"].c_str(), &emuenv.io.case_isens_find_enabled);
         SetTooltipEx(lang.emulator["case_insensitive_description"].c_str());
 #endif
         ImGui::Separator();
         TextColoredCentered(GUI_COLOR_TEXT_TITLE, lang.emulator["emu_storage_folder"].c_str());
+        ImGui::Spacing();
+        ImGui::PushItemWidth(320);
+        ImGui::TextColored(GUI_COLOR_TEXT, "%s %s", lang.emulator["current_emu_path"].c_str(), emuenv.cfg.pref_path.c_str());
+        ImGui::PopItemWidth();
         ImGui::Spacing();
         ImGui::PushItemWidth(320);
         ImGui::TextColored(GUI_COLOR_TEXT, "%s %s", lang.emulator["current_emu_path"].c_str(), emuenv.cfg.pref_path.c_str());
@@ -942,12 +945,27 @@ void draw_settings_dialog(GuiState &gui, EmuEnvState &emuenv) {
                 LOG_INFO("Clear all custom config settings successfully.");
             }
         }
+if (ImGui::Button(lang.emulator["clear_custom_config"].c_str())) {
+            if (fs::remove_all(emuenv.config_path / "config")) {
+                LOG_INFO("Clear all custom config settings successfully.");
+            }
+        }
+        SetTooltipEx(lang.emulator["clear_custom_config_description"].c_str());
         ImGui::Spacing();
         ImGui::Separator();
         TextColoredCentered(GUI_COLOR_TEXT_TITLE, lang.emulator["screenshot_image_type"].c_str());
         ImGui::Spacing();
         const char *LIST_IMG_FORMAT[] = { lang.emulator["null"].c_str(), "JPEG", "PNG" };
         ImGui::Combo(lang.emulator["screenshot_format"].c_str(), &emuenv.cfg.screenshot_format, LIST_IMG_FORMAT, IM_ARRAYSIZE(LIST_IMG_FORMAT));
+        ImGui::Spacing();
+        ImGui::Separator();
+        TextColoredCentered(GUI_COLOR_TEXT_TITLE, "FPS Limiting");
+        ImGui::Spacing();
+        ImGui::SliderInt("##Desired FPS", &emuenv.cfg.desired_fps, 1, 240);
+        ImGui::SameLine();
+        ImGui::Checkbox("FPS Limit", &emuenv.cfg.fps_limit);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Sets the given FPS limit.");
         ImGui::EndTabItem();
     } else
         ImGui::PopStyleColor();
