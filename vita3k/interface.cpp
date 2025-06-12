@@ -290,6 +290,7 @@ std::vector<ContentInfo> install_archive(EmuEnvState &emuenv, GuiState *gui, con
     update_progress();
 
     std::vector<ContentInfo> content_installed{};
+    content_installed.reserve(content_path.size());
     for (auto &path : content_path) {
         current++;
         update_progress();
@@ -433,12 +434,21 @@ static ExitCode load_app_impl(SceUID &main_module_id, EmuEnvState &emuenv) {
     init_device_paths(emuenv.io);
     init_savedata_app_path(emuenv.io, emuenv.pref_path);
 
+init_device_paths(emuenv.io);
+    init_savedata_app_path(emuenv.io, emuenv.pref_path);
+    
     // Load param.sfo
     vfs::FileBuffer param_sfo;
     if (vfs::read_app_file(param_sfo, emuenv.pref_path, emuenv.io.app_path, "sce_sys/param.sfo"))
         sfo::load(emuenv.sfo_handle, param_sfo);
-
     init_exported_vars(emuenv);
+    
+    // todo: VAR_NID(__sce_libcparam, 0xDF084DFA) is loaded wrong
+    emuenv.kernel.export_nids.reserve(get_var_exports().size());
+    for (const auto &var : get_var_exports()) {
+        auto addr = var.factory(emuenv);
+        emuenv.kernel.export_nids.emplace(var.nid, addr);
+    }
 
     // Load main executable
     emuenv.self_path = !emuenv.cfg.self_path.empty() ? emuenv.cfg.self_path : EBOOT_PATH;

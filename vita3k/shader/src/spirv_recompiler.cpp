@@ -1234,6 +1234,7 @@ static SpirvShaderParameters create_parameters(spv::Builder &b, const SceGxmProg
     int32_t in_fcount_allocated = 0;
     const bool has_texture_buffer = program.texture_buffer_count > 0;
 
+    literal_pairs.reserve(program_input.inputs.size());
     for (const auto &input : program_input.inputs) {
         std::visit(overloaded{
                        [&](const LiteralInputSource &s) {
@@ -1338,6 +1339,7 @@ static SpirvShaderParameters create_parameters(spv::Builder &b, const SceGxmProg
                 static_cast<int>(constituents.size()), composite_var);
         };
 
+        constituents.reserve(program.literals_count - 1);
         for (std::uint32_t i = 1; i < program.literals_count; i++) {
             // Detect sequence literals.
             if (literal_pairs[i].first == composite_base + constituents.size() && constituents.size() < 4) {

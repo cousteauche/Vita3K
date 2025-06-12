@@ -84,9 +84,19 @@ bool init_vita3k_update(GuiState &gui) {
     const auto has_update = dif_from_current > 0;
     if (has_update) {
         std::thread get_commit_desc([dif_from_current]() {
+        std::thread get_commit_desc([dif_from_current]() {
             // Reset cancel and thread running variable
             cancel_thread = false;
             thread_running = true;
+            
+            // Calculate Page and Per Page Get
+            std::vector<std::pair<uint32_t, uint32_t>> page_count;
+            page_count.reserve(dif_from_current / 100);
+            for (int32_t i = 0; i < dif_from_current; i += 100) {
+                const auto page = i / 100 + 1;
+                const auto per_page = std::min<int32_t>(dif_from_current - i, 100);
+                page_count.emplace_back(page, per_page);
+            }
 
             // Lambda function for get commits from github api
             const auto get_commits = [dif_from_current]() {
