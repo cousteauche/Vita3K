@@ -78,6 +78,8 @@ enum ScreenshotFormat {
     code(bool, "disable-surface-sync", true, disable_surface_sync)                                      \
     code(std::string, "screen-filter", "Bilinear", screen_filter)                                       \
     code(bool, "v-sync", true, v_sync)                                                                  \
+    code(bool, "fps-limit", false, fps_limit)                                                           \
+    code(int, "desired-fps", 60, desired_fps)                                                           \
     code(int, "anisotropic-filtering", 1, anisotropic_filtering)                                        \
     code(bool, "texture-cache", true, texture_cache)                                                    \
     code(bool, "async-pipeline-compilation", true, async_pipeline_compilation)                          \
