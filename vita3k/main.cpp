@@ -232,9 +232,17 @@ int main(int argc, char *argv[]) {
     // Initialize Linux scheduler
     if (sce_kernel_thread::SimpleLinuxScheduler::initialize()) {
         LOG_INFO("Linux scheduler initialized successfully");
-        // Enable for testing
+        
+        // Enable scheduler
         sce_kernel_thread::SimpleLinuxScheduler::enable(true);
-        LOG_INFO("Linux scheduler ENABLED for testing");
+        LOG_INFO("Linux scheduler ENABLED");
+        
+        // Enable TURBO MODE for maximum performance
+        sce_kernel_thread::SimpleLinuxScheduler::set_turbo_mode(
+            sce_kernel_thread::TurboMode::Aggressive
+        );
+        LOG_INFO("Linux scheduler TURBO MODE: AGGRESSIVE - Maximum performance enabled!");
+        
     } else {
         LOG_WARN("Failed to initialize Linux scheduler");
     }
