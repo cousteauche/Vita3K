@@ -30,6 +30,10 @@
 
 #include <SDL_thread.h>
 
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#include <kernel/thread/linux_scheduler.h>
+#endif
+
 int CorenumAllocator::new_corenum() {
     const std::lock_guard<std::mutex> guard(lock);
 
@@ -66,6 +70,11 @@ static int SDLCALL thread_function(void *data) {
         std::string th_name = "TID:" + std::to_string(thread->id);
         tracy::SetThreadName(th_name.c_str());
     }
+#endif
+
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+// Apply scheduler hints when thread starts (cooperative approach)
+thread->apply_scheduler_hints_if_enabled();
 #endif
 
     thread->run_loop();

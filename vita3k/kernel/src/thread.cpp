@@ -28,6 +28,9 @@
 #include <cstring>
 #include <memory>
 #include <sstream>
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#include <kernel/thread/linux_scheduler.h>
+#endif
 
 void ThreadSignal::wait() {
     std::unique_lock<std::mutex> lock(mutex);
@@ -185,6 +188,7 @@ void ThreadState::exit_delete(bool exit) {
 }
 
 bool ThreadState::run_loop() {
+
     int res = 0;
     int run_level = std::max(call_level, 1);
 
@@ -428,3 +432,21 @@ std::string ThreadState::log_stack_traceback() const {
     }
     return str;
 }
+
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+void ThreadState::apply_scheduler_hints_if_enabled() {
+    if (scheduler_hints_applied) return;
+    
+    if (!sce_kernel_thread::SimpleLinuxScheduler::is_enabled()) return;
+    
+    try {
+        pthread_t handle = pthread_self();
+        auto role = sce_kernel_thread::SimpleLinuxScheduler::classify_thread(name);
+        sce_kernel_thread::SimpleLinuxScheduler::apply_affinity_hint(handle, role);
+        sce_kernel_thread::SimpleLinuxScheduler::log_thread_info(name, role);
+        scheduler_hints_applied = true;
+    } catch (const std::exception& e) {
+        LOG_WARN("Failed to apply scheduler hints to thread '{}': {}", name, e.what());
+    }
+}
+#endif
