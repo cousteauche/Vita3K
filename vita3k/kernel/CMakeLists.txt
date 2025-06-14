@@ -33,3 +33,10 @@ if(TRACY_ENABLE_ON_CORE_COMPONENTS)
 	target_link_libraries(kernel PRIVATE tracy)
 endif()
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_LIST})
+# Add Linux scheduler if on Linux
+if(UNIX AND NOT APPLE)
+    target_sources(kernel PRIVATE
+        src/linux_scheduler.cpp
+    )
+    target_compile_definitions(kernel PRIVATE VITA3K_HAS_LINUX_SCHEDULER=1)
+endif()
