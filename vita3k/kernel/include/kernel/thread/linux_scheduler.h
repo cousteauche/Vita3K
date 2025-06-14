@@ -19,19 +19,20 @@ public:
     static bool initialize();
     static void shutdown();
     static bool is_enabled();
+    static void enable(bool enabled);
     
-    // Simple functions to start with
     static ThreadRole classify_thread(const std::string& name);
     static void apply_affinity_hint(pthread_t thread, ThreadRole role);
     static void log_thread_info(const std::string& name, ThreadRole role);
 
 private:
-    static bool enabled_;
-    static int total_cores_;
-    static std::vector<int> performance_cores_;
-    static std::vector<int> background_cores_;
-    
     static void detect_cores();
+    
+    // Use function-local statics to avoid initialization order issues
+    static bool& get_enabled();
+    static int& get_total_cores();
+    static std::vector<int>& get_performance_cores();
+    static std::vector<int>& get_background_cores();
 };
 
 } // namespace sce_kernel_thread

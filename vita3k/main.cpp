@@ -57,6 +57,10 @@
 #include <thread>
 #include <tracy/Tracy.hpp>
 
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#include <kernel/thread/linux_scheduler.h>
+#endif
+
 static void run_execv(char *argv[], EmuEnvState &emuenv) {
     char const *args[10];
     args[0] = argv[0];
@@ -89,6 +93,13 @@ static void run_execv(char *argv[], EmuEnvState &emuenv) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+    printf("*** VITA3K_HAS_LINUX_SCHEDULER is defined ***\n");
+    fflush(stdout);
+#else
+    printf("*** VITA3K_HAS_LINUX_SCHEDULER is NOT defined ***\n");
+    fflush(stdout);
+#endif
     ZoneScoped; // Tracy - Track main function scope
     Root root_paths;
 
@@ -216,6 +227,18 @@ int main(int argc, char *argv[]) {
         gui::reset_controller_binding(emuenv);
 
     init_libraries(emuenv);
+
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+    // Initialize Linux scheduler
+    if (sce_kernel_thread::SimpleLinuxScheduler::initialize()) {
+        LOG_INFO("Linux scheduler initialized successfully");
+        // Enable for testing
+        sce_kernel_thread::SimpleLinuxScheduler::enable(true);
+        LOG_INFO("Linux scheduler ENABLED for testing");
+    } else {
+        LOG_WARN("Failed to initialize Linux scheduler");
+    }
+#endif
 
     GuiState gui;
     if (!cfg.console) {
@@ -471,6 +494,10 @@ int main(int argc, char *argv[]) {
 
     emuenv.renderer->preclose_action();
     app::destroy(emuenv, gui.imgui_state.get());
+
+#ifdef VITA3K_HAS_LINUX_SCHEDULER
+    sce_kernel_thread::SimpleLinuxScheduler::shutdown();
+#endif
 
     if (emuenv.load_exec)
         run_execv(argv, emuenv);

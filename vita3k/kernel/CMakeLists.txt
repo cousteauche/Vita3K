@@ -38,5 +38,5 @@ if(UNIX AND NOT APPLE)
     target_sources(kernel PRIVATE
         src/linux_scheduler.cpp
     )
-    target_compile_definitions(kernel PRIVATE VITA3K_HAS_LINUX_SCHEDULER=1)
+    target_compile_definitions(kernel PUBLIC VITA3K_HAS_LINUX_SCHEDULER=1)
 endif()
