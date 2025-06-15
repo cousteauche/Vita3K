@@ -23,7 +23,7 @@
 #include <mem/block.h>
 #include <mem/ptr.h>
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#ifdef VITA3K_HAS_HOST_SCHEDULER
 #include <pthread.h>
 #endif
 
@@ -123,7 +123,7 @@ struct ThreadState {
     void resume(bool step = false);
     std::string log_stack_traceback() const;
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#ifdef VITA3K_HAS_HOST_SCHEDULER
     void apply_scheduler_hints_if_enabled();
     bool scheduler_hints_applied = false;
 #endif
