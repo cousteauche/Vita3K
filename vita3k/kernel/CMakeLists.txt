@@ -27,7 +27,7 @@ if(UNIX AND NOT APPLE)  # Linux
     list(APPEND SOURCE_LIST
         src/host_thread_scheduler_linux.cpp
     )
-elseif(WIN32)  # Windows (future support)
+elseif(WIN32)  # Windows
     list(APPEND SOURCE_LIST
         src/host_thread_scheduler_windows.cpp
     )
@@ -53,7 +53,7 @@ if(UNIX AND NOT APPLE)  # Linux
     target_link_libraries(kernel PRIVATE Threads::Threads)
     target_compile_definitions(kernel PRIVATE _GNU_SOURCE)  # For CPU_SET macros
     
-elseif(WIN32)  # Windows (future support)
+elseif(WIN32)  # Windows
     target_compile_definitions(kernel PUBLIC VITA3K_HAS_HOST_SCHEDULER=1)
     target_link_libraries(kernel PRIVATE winmm)  # For timeBeginPeriod/timeEndPeriod
 endif()
