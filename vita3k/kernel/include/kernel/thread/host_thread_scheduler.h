@@ -3,7 +3,9 @@
 
 #include <string>
 #include <vector>
+#ifdef __linux__
 #include <pthread.h>
+#endif
 
 namespace sce_kernel_thread {
 

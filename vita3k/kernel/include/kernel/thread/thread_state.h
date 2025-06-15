@@ -23,7 +23,7 @@
 #include <mem/block.h>
 #include <mem/ptr.h>
 
-#ifdef VITA3K_HAS_HOST_SCHEDULER
+#ifdef __linux__
 #include <pthread.h>
 #endif
 
