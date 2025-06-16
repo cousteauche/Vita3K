@@ -19,7 +19,6 @@ set(SOURCE_LIST
 	src/sync_primitives.cpp
 	src/relocation.cpp
 	src/callback.cpp
-	src/host_thread_scheduler_common.cpp
 )
 
 # Add platform-specific scheduler files

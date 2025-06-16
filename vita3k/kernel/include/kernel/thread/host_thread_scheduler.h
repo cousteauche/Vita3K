@@ -3,8 +3,13 @@
 
 #include <string>
 #include <vector>
+#include <chrono>
+#include <algorithm>
+#include <cctype>
 #ifdef __linux__
 #include <pthread.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #endif
 
 namespace sce_kernel_thread {
@@ -36,14 +41,73 @@ public:
     static void set_turbo_mode(TurboMode mode);
     static TurboMode get_turbo_mode();
     
-    // Thread management
-    static ThreadRole classify_thread(const std::string& name);
+    // Thread management - MOVED FROM COMMON
+    static ThreadRole classify_thread(const std::string& name) {
+        if (name.empty()) {
+            return ThreadRole::Unknown;
+        }
+        
+        // Convert to lowercase for case-insensitive matching
+        std::string lower_name = name;
+        std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+        
+        // Audio threads - real-time priority
+        if (lower_name.find("audio") != std::string::npos ||
+            lower_name.find("sound") != std::string::npos ||
+            lower_name.find("music") != std::string::npos ||
+            lower_name.find("atrac") != std::string::npos ||
+            lower_name.find("snd") != std::string::npos ||
+            lower_name.find("pcm") != std::string::npos) {
+            return ThreadRole::Audio;
+        }
+        
+        // Main render threads - highest priority
+        if (lower_name.find("render") != std::string::npos ||
+            lower_name.find("gxm") != std::string::npos ||
+            lower_name.find("graphics") != std::string::npos ||
+            lower_name.find("gpu") != std::string::npos ||
+            lower_name.find("opengl") != std::string::npos ||
+            lower_name.find("vulkan") != std::string::npos ||
+            lower_name.find("draw") != std::string::npos ||
+            lower_name.find("display") != std::string::npos) {
+            return ThreadRole::MainRender;
+        }
+        
+        // Input threads - low latency required
+        if (lower_name.find("input") != std::string::npos ||
+            lower_name.find("ctrl") != std::string::npos ||
+            lower_name.find("pad") != std::string::npos ||
+            lower_name.find("touch") != std::string::npos ||
+            lower_name.find("controller") != std::string::npos ||
+            lower_name.find("button") != std::string::npos) {
+            return ThreadRole::Input;
+        }
+        
+        // Network/IO threads
+        if (lower_name.find("net") != std::string::npos ||
+            lower_name.find("io") != std::string::npos ||
+            lower_name.find("file") != std::string::npos ||
+            lower_name.find("fios") != std::string::npos ||
+            lower_name.find("socket") != std::string::npos ||
+            lower_name.find("http") != std::string::npos ||
+            lower_name.find("download") != std::string::npos) {
+            return ThreadRole::Network;
+        }
+        
+        // Everything else is background
+        return ThreadRole::Background;
+    }
+    
     static void apply_affinity_hint_current_thread(ThreadRole role);
     static void log_thread_info(const std::string& name, ThreadRole role);
 
     // Platform-specific optimizations
     static void apply_process_optimizations();
     static void detect_hardware_capabilities();
+
+    // GPU coordination 
+    static void set_gpu_worker_cores(int gpu_cores);
+    static int get_gpu_worker_cores();
 
 private:
     // Platform abstraction (implemented per-platform)
@@ -58,6 +122,7 @@ private:
     static std::vector<int>& get_performance_cores();
     static std::vector<int>& get_efficiency_cores();
     static std::vector<int>& get_turbo_cores();
+    static int& get_gpu_cores();
 };
 
 // Convenience macros for easy thread registration

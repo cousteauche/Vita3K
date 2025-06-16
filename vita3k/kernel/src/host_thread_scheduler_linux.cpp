@@ -9,8 +9,8 @@
 #include <cstring>
 #include <pthread.h>
 #include <sched.h>
-#include <sys/resource.h>
-#include <unistd.h>
+#include <sys/resource.h>  // Add this
+#include <unistd.h>        // Add this
 
 namespace sce_kernel_thread {
 
@@ -43,6 +43,20 @@ std::vector<int>& HostThreadScheduler::get_efficiency_cores() {
 std::vector<int>& HostThreadScheduler::get_turbo_cores() {
     static std::vector<int> turbo_cores;
     return turbo_cores;
+}
+
+int& HostThreadScheduler::get_gpu_cores() {
+    static int gpu_worker_cores = 0;
+    return gpu_worker_cores;
+}
+
+void HostThreadScheduler::set_gpu_worker_cores(int gpu_cores) {
+    get_gpu_cores() = gpu_cores;
+    LOG_INFO("Scheduler informed: GPU using {} worker cores (0-{})", gpu_cores, gpu_cores - 1);
+}
+
+int HostThreadScheduler::get_gpu_worker_cores() {
+    return get_gpu_cores();
 }
 
 bool HostThreadScheduler::initialize() {
@@ -110,96 +124,171 @@ void HostThreadScheduler::apply_affinity_hint_current_thread(ThreadRole role) {
     
     const auto& perf_cores = get_performance_cores();
     const auto& eff_cores = get_efficiency_cores();
-    const auto& turbo_cores = get_turbo_cores();
-    TurboMode turbo = get_turbo_mode_ref();
+    int total_cores = get_total_cores();
+    int gpu_cores = get_gpu_worker_cores();
     
-    switch (role) {
-        case ThreadRole::MainRender:
-            // MainRender gets turbo cores in aggressive mode, all P-cores otherwise
-            if (turbo == TurboMode::Aggressive && !turbo_cores.empty()) {
-                for (int core : turbo_cores) {
-                    CPU_SET(core, &cpuset);
+    // Smart handling based on core count
+    if (total_cores <= 2) {
+        // Single/Dual core: No affinity restrictions, let OS schedule
+        // Scheduler would hurt more than help on these systems
+        for (int i = 0; i < total_cores; i++) {
+            CPU_SET(i, &cpuset);
+        }
+        LOG_DEBUG("Low core count ({}): No affinity restrictions for role {}", 
+                 total_cores, static_cast<int>(role));
+        
+    } else if (total_cores <= 4) {
+        // Quad core: Only basic priority separation, minimal affinity
+        switch (role) {
+            case ThreadRole::Audio:
+                // Audio priority: prefer first cores but allow all
+                for (int i = 0; i < total_cores; i++) {
+                    CPU_SET(i, &cpuset);
                 }
-            } else if (!perf_cores.empty()) {
-                for (int core : perf_cores) {
-                    CPU_SET(core, &cpuset);
+                LOG_DEBUG("Quad core: Audio gets all cores with high priority");
+                break;
+                
+            default:
+                // Everything else: all cores, normal priority
+                for (int i = 0; i < total_cores; i++) {
+                    CPU_SET(i, &cpuset);
                 }
-            }
-            break;
-            
-        case ThreadRole::Audio:
-            // Audio gets dedicated P-cores for low latency
-            if (!perf_cores.empty()) {
-                // Use first few P-cores for audio
-                for (size_t i = 0; i < std::min(size_t(4), perf_cores.size()); i++) {
-                    CPU_SET(perf_cores[i], &cpuset);
-                }
-            }
-            break;
-            
-        case ThreadRole::Input:
-            // Input gets some P-cores
-            if (!perf_cores.empty()) {
-                for (size_t i = 0; i < std::min(size_t(2), perf_cores.size()); i++) {
-                    CPU_SET(perf_cores[i], &cpuset);
-                }
-            }
-            break;
-            
-        case ThreadRole::Network:
-        case ThreadRole::Background:
-            // Background tasks go to E-cores when available
-            if (!eff_cores.empty()) {
-                for (int core : eff_cores) {
-                    CPU_SET(core, &cpuset);
-                }
-            } else if (!perf_cores.empty()) {
-                // Fallback to P-cores if no E-cores
-                for (int core : perf_cores) {
-                    CPU_SET(core, &cpuset);
-                }
-            }
-            break;
-            
-        default:
-            // Unknown role - allow all cores
-            for (int i = 0; i < get_total_cores(); i++) {
+                break;
+        }
+        
+    } else {
+        // 6+ cores: Use proper separation
+        int gpu_reserved_cores = (gpu_cores > 0) ? gpu_cores : std::max(2, total_cores / 3);
+        int available_cpu_cores = total_cores - gpu_reserved_cores;
+        
+        // Only separate if we have enough cores to make it worthwhile
+        if (available_cpu_cores < 2) {
+            // Not enough cores for separation - disable affinity
+            for (int i = 0; i < total_cores; i++) {
                 CPU_SET(i, &cpuset);
             }
-            break;
+            LOG_DEBUG("Insufficient cores for separation ({}), using all cores", total_cores);
+            
+        } else {
+            // Enough cores: apply proper separation
+            switch (role) {
+                case ThreadRole::MainRender:
+                    // Render gets cores after GPU reservation
+                    for (int i = 0; i < 2 && (gpu_reserved_cores + i) < total_cores; i++) {
+                        CPU_SET(gpu_reserved_cores + i, &cpuset);
+                    }
+                    LOG_DEBUG("Render assigned cores {}-{}", gpu_reserved_cores, gpu_reserved_cores + 1);
+                    break;
+                    
+                case ThreadRole::Audio:
+                    // Audio gets next cores after render
+                    if (available_cpu_cores >= 4) {
+                        int audio_start = gpu_reserved_cores + 2;
+                        for (int i = 0; i < 2 && (audio_start + i) < total_cores; i++) {
+                            CPU_SET(audio_start + i, &cpuset);
+                        }
+                        LOG_DEBUG("Audio assigned cores {}-{}", audio_start, audio_start + 1);
+                    } else {
+                        // Share with render but apply priority
+                        for (int i = gpu_reserved_cores; i < total_cores; i++) {
+                            CPU_SET(i, &cpuset);
+                        }
+                        LOG_DEBUG("Audio shares CPU cores with render (insufficient cores)");
+                    }
+                    break;
+                    
+                case ThreadRole::Input:
+                case ThreadRole::Network:
+                case ThreadRole::Background:
+                    // Background: E-cores if available, else remaining cores
+                    if (!eff_cores.empty()) {
+                        for (int core : eff_cores) {
+                            CPU_SET(core, &cpuset);
+                        }
+                        LOG_DEBUG("Background assigned E-cores");
+                    } else {
+                        // No E-cores: use remaining cores
+                        int bg_start = gpu_reserved_cores + 4;
+                        if (bg_start >= total_cores) bg_start = gpu_reserved_cores;
+                        for (int i = bg_start; i < total_cores; i++) {
+                            CPU_SET(i, &cpuset);
+                        }
+                        LOG_DEBUG("Background assigned remaining cores");
+                    }
+                    break;
+                    
+                default:
+                    // Unknown: avoid GPU cores if possible
+                    for (int i = gpu_reserved_cores; i < total_cores; i++) {
+                        CPU_SET(i, &cpuset);
+                    }
+                    break;
+            }
+        }
     }
     
     if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
         LOG_WARN("Failed to set CPU affinity for thread role {}", static_cast<int>(role));
     }
     
-    // Apply real-time scheduling for critical threads
-    apply_platform_priority(role, turbo);
+    // Apply priority regardless of affinity
+    apply_platform_priority(role, get_turbo_mode_ref());
 }
 
 void HostThreadScheduler::apply_platform_priority(ThreadRole role, TurboMode turbo) {
     pthread_t current_thread = pthread_self();
     
-    // Apply real-time scheduling for critical threads
-    if (role == ThreadRole::Audio || role == ThreadRole::MainRender) {
-        struct sched_param param;
-        param.sched_priority = (role == ThreadRole::Audio) ? 50 : 40;
-        
-        if (pthread_setschedparam(current_thread, SCHED_FIFO, &param) != 0) {
-            LOG_WARN("Failed to set real-time priority for thread role {}", static_cast<int>(role));
-        }
+    switch (role) {
+        case ThreadRole::Audio:
+            {
+                // Try real-time priority first, fall back gracefully
+                struct sched_param param;
+                param.sched_priority = 10;  // Lower RT priority that might work
+                if (pthread_setschedparam(current_thread, SCHED_FIFO, &param) != 0) {
+                    // Fallback: Just log and continue with normal scheduling
+                    LOG_DEBUG("Audio thread using normal priority (RT requires privileges)");
+                }
+            }
+            break;
+            
+        case ThreadRole::MainRender:
+            {
+                // Use normal scheduling - no nice() calls
+                struct sched_param param;
+                param.sched_priority = 0;
+                pthread_setschedparam(current_thread, SCHED_OTHER, &param);
+                LOG_DEBUG("Render thread using normal priority");
+            }
+            break;
+            
+        case ThreadRole::Input:
+            {
+                // Try moderate RT priority, fall back gracefully  
+                struct sched_param param;
+                param.sched_priority = 5;  // Very low RT priority
+                if (pthread_setschedparam(current_thread, SCHED_FIFO, &param) != 0) {
+                    LOG_DEBUG("Input thread using normal priority (RT requires privileges)");
+                }
+            }
+            break;
+            
+        default:
+            // Other threads use normal scheduling
+            break;
     }
 }
+
 
 void HostThreadScheduler::apply_process_optimizations() {
     TurboMode turbo = get_turbo_mode_ref();
     
     if (turbo != TurboMode::Disabled) {
-        // Set process priority
-        int nice_value = (turbo == TurboMode::Aggressive) ? -10 : -5;
-        if (nice(nice_value) == -1 && errno != 0) {
-            LOG_WARN("Failed to set process nice value to {}: {}", nice_value, strerror(errno));
-        }
+        LOG_INFO("Turbo mode enabled: {} (process-level optimizations require privileges)", 
+                 turbo == TurboMode::Aggressive ? "AGGRESSIVE" : "BALANCED");
+        
+        // Don't attempt privileged operations
+        // The CPU affinity and thread classification is the main benefit
+        LOG_DEBUG("Thread affinity and classification active (no elevated privileges needed)");
     }
 }
 

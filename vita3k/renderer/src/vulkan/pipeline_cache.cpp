@@ -31,6 +31,10 @@
 
 #include <SDL.h>
 
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+#include <kernel/thread/host_thread_scheduler.h>
+#endif
+
 // don't use the dispatch version, because we always hash a small amount
 // with a known size
 #define XXH_INLINE_ALL
@@ -210,22 +214,31 @@ void PipelineCache::init() {
         state.features.support_rgb_attributes = unsupported_rgb_vertex_attribute_formats.empty();
     }
 
-    const int nb_logical_threads = SDL_GetCPUCount();
-    // took this from RPCS3 (slightly modified)
-    if (nb_logical_threads > 12)
-        nb_worker_threads = 6;
-    else if (nb_logical_threads > 8)
-        nb_worker_threads = 4;
-    else if (nb_logical_threads >= 6)
-        nb_worker_threads = 2;
-    else
-        nb_worker_threads = 1;
+const int nb_logical_threads = SDL_GetCPUCount();
+int nb_worker_threads;
 
-    if (use_async_compilation) {
-        // we could not initialize the worker threads previously
-        use_async_compilation = false;
-        set_async_compilation(true);
-    }
+if (nb_logical_threads <= 1) {
+    nb_worker_threads = 1;
+} else if (nb_logical_threads <= 5) {
+    nb_worker_threads = 2;
+} else if (nb_logical_threads <= 7) {
+    nb_worker_threads = 4;
+} else if (nb_logical_threads <= 11) {
+    nb_worker_threads = 6;
+} else if (nb_logical_threads <= 15) {
+    nb_worker_threads = 8;
+} else if (nb_logical_threads <= 23) {
+    nb_worker_threads = 12;
+} else {
+    // For high core count systems (24+), use half the cores but cap at 32
+    nb_worker_threads = std::min(32, nb_logical_threads / 2);
+}
+
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+// Inform scheduler about GPU worker allocation
+sce_kernel_thread::HostThreadScheduler::set_gpu_worker_cores(nb_worker_threads);
+LOG_INFO("GPU workers: {}, CPU threads will use remaining cores", nb_worker_threads);
+#endif
 }
 
 void PipelineCache::set_async_compilation(bool enable) {
