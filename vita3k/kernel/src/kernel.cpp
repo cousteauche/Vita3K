@@ -30,8 +30,8 @@
 
 #include <SDL_thread.h>
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
-#include <kernel/thread/linux_scheduler.h>
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+#include <kernel/thread/host_thread_scheduler.h>
 #endif
 
 int CorenumAllocator::new_corenum() {
@@ -72,7 +72,7 @@ static int SDLCALL thread_function(void *data) {
     }
 #endif
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#ifdef VITA3K_HAS_HOST_SCHEDULER
 // Apply scheduler hints when thread starts (cooperative approach)
 thread->apply_scheduler_hints_if_enabled();
 #endif

@@ -28,8 +28,8 @@
 #include <cstring>
 #include <memory>
 #include <sstream>
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
-#include <kernel/thread/linux_scheduler.h>
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+#include <kernel/thread/host_thread_scheduler.h>
 #endif
 
 void ThreadSignal::wait() {
@@ -433,20 +433,14 @@ std::string ThreadState::log_stack_traceback() const {
     return str;
 }
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
+#ifdef VITA3K_HAS_HOST_SCHEDULER
 void ThreadState::apply_scheduler_hints_if_enabled() {
-    if (scheduler_hints_applied) return;
+    if (!sce_kernel_thread::HostThreadScheduler::is_enabled()) return;
     
-    if (!sce_kernel_thread::SimpleLinuxScheduler::is_enabled()) return;
-    
-    try {
-        pthread_t handle = pthread_self();
-        auto role = sce_kernel_thread::SimpleLinuxScheduler::classify_thread(name);
-        sce_kernel_thread::SimpleLinuxScheduler::apply_affinity_hint(handle, role);
-        sce_kernel_thread::SimpleLinuxScheduler::log_thread_info(name, role);
-        scheduler_hints_applied = true;
-    } catch (const std::exception& e) {
-        LOG_WARN("Failed to apply scheduler hints to thread '{}': {}", name, e.what());
+    if (!name.empty()) {
+        auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
+        sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
+        sce_kernel_thread::HostThreadScheduler::log_thread_info(name, role);
     }
 }
 #endif

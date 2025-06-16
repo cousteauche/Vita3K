@@ -57,9 +57,8 @@
 #include <thread>
 #include <tracy/Tracy.hpp>
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
-#include <kernel/thread/linux_scheduler.h>
-#endif
+#include <kernel/thread/host_thread_scheduler.h>
+
 
 static void run_execv(char *argv[], EmuEnvState &emuenv) {
     char const *args[10];
@@ -93,12 +92,10 @@ static void run_execv(char *argv[], EmuEnvState &emuenv) {
 }
 
 int main(int argc, char *argv[]) {
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
-    printf("*** VITA3K_HAS_LINUX_SCHEDULER is defined ***\n");
-    fflush(stdout);
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+    printf("*** VITA3K_HAS_HOST_SCHEDULER is defined ***\n");
 #else
-    printf("*** VITA3K_HAS_LINUX_SCHEDULER is NOT defined ***\n");
-    fflush(stdout);
+    printf("*** VITA3K_HAS_HOST_SCHEDULER is NOT defined ***\n");
 #endif
     ZoneScoped; // Tracy - Track main function scope
     Root root_paths;
@@ -228,23 +225,17 @@ int main(int argc, char *argv[]) {
 
     init_libraries(emuenv);
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
-    // Initialize Linux scheduler
-    if (sce_kernel_thread::SimpleLinuxScheduler::initialize()) {
-        LOG_INFO("Linux scheduler initialized successfully");
-        
-        // Enable scheduler
-        sce_kernel_thread::SimpleLinuxScheduler::enable(true);
-        LOG_INFO("Linux scheduler ENABLED");
-        
-        // Enable TURBO MODE for maximum performance
-        sce_kernel_thread::SimpleLinuxScheduler::set_turbo_mode(
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+    if (sce_kernel_thread::HostThreadScheduler::initialize()) {
+        LOG_INFO("Host thread scheduler initialized successfully");
+        sce_kernel_thread::HostThreadScheduler::enable(true);
+        LOG_INFO("Host thread scheduler ENABLED");
+        sce_kernel_thread::HostThreadScheduler::set_turbo_mode(
             sce_kernel_thread::TurboMode::Aggressive
         );
-        LOG_INFO("Linux scheduler TURBO MODE: AGGRESSIVE - Maximum performance enabled!");
-        
+        LOG_INFO("Host thread scheduler TURBO MODE: AGGRESSIVE - Maximum performance enabled!");
     } else {
-        LOG_WARN("Failed to initialize Linux scheduler");
+        LOG_WARN("Failed to initialize host thread scheduler");
     }
 #endif
 
@@ -521,8 +512,8 @@ gui::draw_begin(gui, emuenv);
     emuenv.renderer->preclose_action();
     app::destroy(emuenv, gui.imgui_state.get());
 
-#ifdef VITA3K_HAS_LINUX_SCHEDULER
-    sce_kernel_thread::SimpleLinuxScheduler::shutdown();
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+    sce_kernel_thread::HostThreadScheduler::shutdown();
 #endif
 
     if (emuenv.load_exec)
