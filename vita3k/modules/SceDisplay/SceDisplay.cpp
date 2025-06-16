@@ -32,55 +32,31 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-    // WipEout 2048 FPS hack with loading detection and emergency optimization
-    if (emuenv.display.fps_hack && 
-        (emuenv.io.title_id == "PCSF00007" || emuenv.io.title_id == "PCSA00015")) {
-        
-        // Emergency optimization for performance drops (stuck ships, etc.)
-        static int low_fps_frames = 0;
-        static auto last_fps_check = std::chrono::high_resolution_clock::now();
-        static float current_fps = 60.0f;
-        
-        // Calculate FPS every few frames
-        if (is_since_setbuf) {
-            auto now = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_fps_check);
-            if (duration.count() > 100) { // Check every 100ms
-                current_fps = 1000.0f / duration.count();
-                last_fps_check = now;
-            }
-        }
-        
-        // Emergency mode for performance drops
-        if (current_fps < 45) {
-            low_fps_frames++;
-            if (low_fps_frames > 5) {
-                // Emergency: skip ALL waits for any type
-                return SCE_DISPLAY_ERROR_OK;
-            }
-        } else {
-            low_fps_frames = 0;
-        }
-        
-        // Normal loading detection and optimization
-        static uint64_t last_frame_time = 0;
-        uint64_t current_time = emuenv.display.vblank_count.load();
-        
-        bool likely_loading = false;
-        if (is_since_setbuf) {
-            uint64_t frame_gap = current_time - last_frame_time;
-            likely_loading = (frame_gap > 2) || (vcount > 1);
-            last_frame_time = current_time;
-        }
-        
-        if (likely_loading) {
-            return SCE_DISPLAY_ERROR_OK;
-        }
-        
-        // Standard FPS hack
-        if (is_since_setbuf) return SCE_DISPLAY_ERROR_OK;
-        vcount = 0;
+    // Clean FPS hack: Simply convert 30fps requests to 60fps
+    if (emuenv.display.fps_hack && vcount > 1) {
+        vcount = 1;
     }
+
+    uint64_t target_vcount;
+    if (is_since_setbuf) {
+        target_vcount = emuenv.display.last_setframe_vblank_count + vcount;
+    } else {
+        // the wait is considered starting from the last time the thread resumed
+        // from a vblank wait (sceDisplayWait...) and not from the time this function was called
+        // but we still need to wait at least for one vblank
+        const uint64_t next_vsync = emuenv.display.vblank_count + 1;
+        const uint64_t min_vsync = thread->last_vblank_waited + vcount;
+        thread->last_vblank_waited = std::max(next_vsync, min_vsync);
+        target_vcount = thread->last_vblank_waited;
+    }
+
+    wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
+
+    if (emuenv.display.abort.load())
+        return SCE_DISPLAY_ERROR_NO_PIXEL_DATA;
+
+    return SCE_DISPLAY_ERROR_OK;
+}
 
     if (emuenv.display.fps_hack && vcount > 1)
         vcount = 1;
