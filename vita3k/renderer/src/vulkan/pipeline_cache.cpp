@@ -213,26 +213,25 @@ void PipelineCache::init() {
         }
         state.features.support_rgb_attributes = unsupported_rgb_vertex_attribute_formats.empty();
     }
+    
+      const int nb_logical_threads = SDL_GetCPUCount();
+    
+    // REVERT TO ORIGINAL CONSERVATIVE LOGIC - DON'T BE GREEDY WITH CORES
+    // The old working code was much more conservative and stable
+    if (nb_logical_threads > 12)
+        nb_worker_threads = 6;           // Max 6 workers even on 24+ core systems
+    else if (nb_logical_threads > 8)
+        nb_worker_threads = 4;           // 4 workers for 9-12 core systems  
+    else if (nb_logical_threads >= 6)
+        nb_worker_threads = 2;           // 2 workers for 6-8 core systems
+    else
+        nb_worker_threads = 1;           // 1 worker for small systems
+    // REVERT TO ORIGINAL CONSERVATIVE LOGIC - DON'T BE GREEDY WITH CORES
+    // The old working code was much more conservative and stable
+        // 1 worker for small systems
 
-const int nb_logical_threads = SDL_GetCPUCount();
-int nb_worker_threads;
-
-if (nb_logical_threads <= 1) {
-    nb_worker_threads = 1;
-} else if (nb_logical_threads <= 5) {
-    nb_worker_threads = 2;
-} else if (nb_logical_threads <= 7) {
-    nb_worker_threads = 4;
-} else if (nb_logical_threads <= 11) {
-    nb_worker_threads = 6;
-} else if (nb_logical_threads <= 15) {
-    nb_worker_threads = 8;
-} else if (nb_logical_threads <= 23) {
-    nb_worker_threads = 12;
-} else {
-    // For high core count systems (24+), use half the cores but cap at 32
-    nb_worker_threads = std::min(32, nb_logical_threads / 2);
-}
+    LOG_INFO("Vulkan pipeline workers: {} (conservative allocation for {} total cores)", 
+             nb_worker_threads, nb_logical_threads);
 
 #ifdef VITA3K_HAS_HOST_SCHEDULER
 // Inform scheduler about GPU worker allocation

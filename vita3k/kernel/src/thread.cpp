@@ -194,7 +194,7 @@ bool ThreadState::run_loop() {
 
 #ifdef VITA3K_HAS_HOST_SCHEDULER
     // Reapply scheduler hints periodically to prevent migration
-    reapply_scheduler_hints_if_needed();
+    // reapply_scheduler_hints_if_needed();
 #endif
 
     std::unique_lock<std::mutex> lock(mutex);
@@ -451,19 +451,4 @@ void ThreadState::apply_scheduler_hints_if_enabled() {
     }
 }
 
-void ThreadState::reapply_scheduler_hints_if_needed() {
-    if (!sce_kernel_thread::HostThreadScheduler::is_enabled()) return;
-    
-    auto now = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_affinity_check);
-    
-    // Reapply affinity every 500ms to prevent drift
-    if (duration.count() > 500) {
-        if (!name.empty()) {
-            auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
-            sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
-        }
-        last_affinity_check = now;
-    }
-}
 #endif
