@@ -126,6 +126,7 @@ struct ThreadState {
 #ifdef VITA3K_HAS_HOST_SCHEDULER
     void apply_scheduler_hints_if_enabled();
     bool scheduler_hints_applied = false;
+    std::chrono::steady_clock::time_point last_affinity_check = std::chrono::steady_clock::now(); 
 #endif
 
 private:

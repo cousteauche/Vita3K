@@ -28,6 +28,7 @@
 #include <cstring>
 #include <memory>
 #include <sstream>
+#include <chrono>  // Add this
 #ifdef VITA3K_HAS_HOST_SCHEDULER
 #include <kernel/thread/host_thread_scheduler.h>
 #endif
@@ -188,9 +189,13 @@ void ThreadState::exit_delete(bool exit) {
 }
 
 bool ThreadState::run_loop() {
-
     int res = 0;
     int run_level = std::max(call_level, 1);
+
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+    // Reapply scheduler hints periodically to prevent migration
+    // reapply_scheduler_hints_if_needed();
+#endif
 
     std::unique_lock<std::mutex> lock(mutex);
 
@@ -437,10 +442,13 @@ std::string ThreadState::log_stack_traceback() const {
 void ThreadState::apply_scheduler_hints_if_enabled() {
     if (!sce_kernel_thread::HostThreadScheduler::is_enabled()) return;
     
-    if (!name.empty()) {
+    if (!name.empty() && !scheduler_hints_applied) {
         auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
         sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
         sce_kernel_thread::HostThreadScheduler::log_thread_info(name, role);
+        scheduler_hints_applied = true;
+        last_affinity_check = std::chrono::steady_clock::now();
     }
 }
+
 #endif
