@@ -32,9 +32,6 @@ TRACY_MODULE_NAME(SceDisplay);
 static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
     const auto &thread = emuenv.kernel.get_thread(thread_id);
 
-static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const bool is_since_setbuf, const bool is_cb) {
-    const auto &thread = emuenv.kernel.get_thread(thread_id);
-
     // Clean FPS hack: Simply convert 30fps requests to 60fps
     if (emuenv.display.fps_hack && vcount > 1) {
         vcount = 1;
@@ -47,23 +44,6 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
         // the wait is considered starting from the last time the thread resumed
         // from a vblank wait (sceDisplayWait...) and not from the time this function was called
         // but we still need to wait at least for one vblank
-        const uint64_t next_vsync = emuenv.display.vblank_count + 1;
-        const uint64_t min_vsync = thread->last_vblank_waited + vcount;
-        thread->last_vblank_waited = std::max(next_vsync, min_vsync);
-        target_vcount = thread->last_vblank_waited;
-    }
-
-    wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
-
-    if (emuenv.display.abort.load())
-        return SCE_DISPLAY_ERROR_NO_PIXEL_DATA;
-
-    return SCE_DISPLAY_ERROR_OK;
-}
-    uint64_t target_vcount;
-    if (is_since_setbuf) {
-        target_vcount = emuenv.display.last_setframe_vblank_count + vcount;
-    } else {
         const uint64_t next_vsync = emuenv.display.vblank_count + 1;
         const uint64_t min_vsync = thread->last_vblank_waited + vcount;
         thread->last_vblank_waited = std::max(next_vsync, min_vsync);
