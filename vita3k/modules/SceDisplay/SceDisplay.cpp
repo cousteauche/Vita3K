@@ -58,27 +58,6 @@ static int display_wait(EmuEnvState &emuenv, SceUID thread_id, int vcount, const
     return SCE_DISPLAY_ERROR_OK;
 }
 
-    if (emuenv.display.fps_hack && vcount > 1)
-        vcount = 1;
-
-    uint64_t target_vcount;
-    if (is_since_setbuf) {
-        target_vcount = emuenv.display.last_setframe_vblank_count + vcount;
-    } else {
-        const uint64_t next_vsync = emuenv.display.vblank_count + 1;
-        const uint64_t min_vsync = thread->last_vblank_waited + vcount;
-        thread->last_vblank_waited = std::max(next_vsync, min_vsync);
-        target_vcount = thread->last_vblank_waited;
-    }
-
-    wait_vblank(emuenv.display, emuenv.kernel, thread, target_vcount, is_cb);
-
-    if (emuenv.display.abort.load())
-        return SCE_DISPLAY_ERROR_NO_PIXEL_DATA;
-
-    return SCE_DISPLAY_ERROR_OK;
-}
-
 EXPORT(SceInt32, _sceDisplayGetFrameBuf, SceDisplayFrameBuf *pFrameBuf, SceDisplaySetBufSync sync, uint32_t *pFrameBuf_size) {
     TRACY_FUNC(_sceDisplayGetFrameBuf, pFrameBuf, sync, pFrameBuf_size);
     if (pFrameBuf->size != sizeof(SceDisplayFrameBuf) && pFrameBuf->size != sizeof(SceDisplayFrameBuf2))
