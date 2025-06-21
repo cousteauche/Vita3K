@@ -40,7 +40,7 @@ add_library(
 
 target_include_directories(kernel PUBLIC include)
 target_link_libraries(kernel PUBLIC rtc cpu mem util nids)
-target_link_libraries(kernel PRIVATE patch sdl2 miniz vita-toolchain)
+target_link_libraries(kernel PRIVATE patch SDL3::SDL3 miniz vita-toolchain)
 
 # Host Thread Scheduler definitions
 if(UNIX AND NOT APPLE)  # Linux
