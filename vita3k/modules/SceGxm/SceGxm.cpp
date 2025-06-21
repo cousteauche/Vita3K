@@ -900,10 +900,20 @@ static void display_entry_thread(EmuEnvState &emuenv) {
         return;
     }
 
-    while (true) {
+    // Add a flag to track if we should keep running
+    bool should_run = true;
+    
+    while (should_run) {
         auto display_callback = display_queue.top();
-        if (!display_callback)
-            break;
+        if (!display_callback) {
+            // Check if GXM is being terminated
+            if (!emuenv.gxm.params.displayQueueCallback.address()) {
+                // GXM is shutting down
+                break;
+            }
+            // Otherwise, continue waiting for items
+            continue;
+        }
 
         SceGxmSyncObject *old_sync = display_callback->old_sync.get(emuenv.mem);
         SceGxmSyncObject *new_sync = display_callback->new_sync.get(emuenv.mem);
