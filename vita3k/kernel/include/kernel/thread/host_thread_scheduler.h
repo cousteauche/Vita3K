@@ -12,6 +12,9 @@
 #include <unistd.h>
 #endif
 
+// Forward declaration for SceInt32
+typedef int SceInt32;
+
 namespace sce_kernel_thread {
 
 enum class ThreadRole {
@@ -26,7 +29,8 @@ enum class ThreadRole {
 enum class TurboMode {
     Disabled,
     Balanced,        // Conservative performance boost
-    Aggressive       // Maximum performance mode
+    Aggressive,      // Maximum performance mode
+    Ultra            // Break all limits - use all cores
 };
 
 class HostThreadScheduler {
@@ -109,6 +113,12 @@ public:
     static void set_gpu_worker_cores(int gpu_cores);
     static int get_gpu_worker_cores();
 
+    // Enhanced thread management for Vita overclocking
+    static void set_vita_affinity_multiplier(float multiplier);
+    static float get_vita_affinity_multiplier();
+    static void apply_vita_thread_optimization(const std::string& name, int vita_priority, SceInt32 vita_affinity);
+    static bool is_ultra_mode_active();
+    
 private:
     // Platform abstraction (implemented per-platform)
     static void detect_cores();
@@ -123,6 +133,8 @@ private:
     static std::vector<int>& get_efficiency_cores();
     static std::vector<int>& get_turbo_cores();
     static int& get_gpu_cores();
+    static float& get_vita_affinity_multiplier_ref();  // Changed name to avoid conflict
+    static std::vector<int>& get_ultra_cores();
 };
 
 // Convenience macros for easy thread registration

@@ -60,6 +60,30 @@ int HostThreadScheduler::get_gpu_worker_cores() {
     return get_gpu_cores();
 }
 
+float& HostThreadScheduler::get_vita_affinity_multiplier_ref() {
+    static float multiplier = 1.0f;
+    return multiplier;
+}
+
+std::vector<int>& HostThreadScheduler::get_ultra_cores() {
+    static std::vector<int> ultra_cores;
+    return ultra_cores;
+}
+
+void HostThreadScheduler::set_vita_affinity_multiplier(float multiplier) {
+    get_vita_affinity_multiplier_ref() = multiplier;
+    LOG_INFO("Vita affinity multiplier set to {}x (maps 4 Vita cores to {} host cores)", 
+             multiplier, static_cast<int>(4 * multiplier));
+}
+
+float HostThreadScheduler::get_vita_affinity_multiplier() {
+    return get_vita_affinity_multiplier_ref();
+}
+
+bool HostThreadScheduler::is_ultra_mode_active() {
+    return get_turbo_mode_ref() == TurboMode::Ultra;
+}
+
 bool HostThreadScheduler::initialize() {
     try {
         LOG_INFO("Initializing Super-Optimized Host Thread Scheduler (Linux)");
@@ -86,10 +110,12 @@ void HostThreadScheduler::detect_cores() {
     auto& perf_cores = get_performance_cores();
     auto& eff_cores = get_efficiency_cores();
     auto& turbo_cores = get_turbo_cores();
+    auto& ultra_cores = get_ultra_cores();
     
     perf_cores.clear();
     eff_cores.clear();
     turbo_cores.clear();
+    ultra_cores.clear();
     
     int total = get_total_cores();
     
@@ -101,11 +127,14 @@ void HostThreadScheduler::detect_cores() {
             if (i < 6) {
                 turbo_cores.push_back(i);  // Best 6 P-cores for critical work
             }
+            if (i < 12) {
+                ultra_cores.push_back(i);  // Best 12 P-cores for ultra mode
+            }
         }
         for (int i = 16; i < 24; i++) {
             eff_cores.push_back(i);
         }
-        LOG_INFO("Intel 24-thread CPU: P-cores 0-15 (turbo 0-5), E-cores 16-23");
+        LOG_INFO("Intel 24-thread CPU: P-cores 0-15 (turbo 0-5, ultra 0-11), E-cores 16-23");
     } 
     else if (total >= 16 && total < 24) {
         // 16-20 thread CPUs: assume mostly P-cores
@@ -115,12 +144,16 @@ void HostThreadScheduler::detect_cores() {
             if (i < 6) {
                 turbo_cores.push_back(i);
             }
+            if (i < 10) {
+                ultra_cores.push_back(i);
+            }
         }
         for (int i = p_core_count; i < total; i++) {
             eff_cores.push_back(i);
         }
-        LOG_INFO("High-end CPU: P-cores 0-{}, E-cores {}-{}", 
-                 p_core_count-1, p_core_count, total-1);
+        LOG_INFO("High-end CPU: P-cores 0-{}, E-cores {}-{}, ultra 0-{}", 
+                 p_core_count-1, p_core_count, total-1, 
+                 std::min(10, p_core_count)-1);
     }
     else if (total >= 12) {
         // 12-15 thread CPUs: 2/3 P-cores, 1/3 E-cores
@@ -130,11 +163,12 @@ void HostThreadScheduler::detect_cores() {
             if (i < p_core_count / 2) {
                 turbo_cores.push_back(i);
             }
+            ultra_cores.push_back(i);  // All P-cores for ultra
         }
         for (int i = p_core_count; i < total; i++) {
             eff_cores.push_back(i);
         }
-        LOG_INFO("Mid-range CPU: P-cores 0-{}, E-cores {}-{}", 
+        LOG_INFO("Mid-range CPU: P-cores 0-{}, E-cores {}-{}, ultra uses all P-cores", 
                  p_core_count-1, p_core_count, total-1);
     }
     else {
@@ -144,8 +178,9 @@ void HostThreadScheduler::detect_cores() {
             if (i < total / 2) {
                 turbo_cores.push_back(i);
             }
+            ultra_cores.push_back(i);  // All cores for ultra
         }
-        LOG_INFO("Standard CPU: All {} cores treated as performance", total);
+        LOG_INFO("Standard CPU: All {} cores treated as performance, ultra uses all", total);
     }
 }
 
@@ -373,6 +408,118 @@ void HostThreadScheduler::apply_platform_priority(ThreadRole role, TurboMode tur
     }
 }
 
+void HostThreadScheduler::apply_vita_thread_optimization(const std::string& name, int vita_priority, SceInt32 vita_affinity) {
+    if (!get_enabled()) return;
+    
+    pthread_t current_thread = pthread_self();
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    
+    const auto& perf_cores = get_performance_cores();
+    const auto& eff_cores = get_efficiency_cores();
+    const auto& turbo_cores = get_turbo_cores();
+    const auto& ultra_cores = get_ultra_cores();
+    TurboMode turbo = get_turbo_mode_ref();
+    float multiplier = get_vita_affinity_multiplier_ref();
+    
+    // First classify the thread
+    ThreadRole role = classify_thread(name);
+    
+    // Ultra mode: Break all limits!
+    if (turbo == TurboMode::Ultra) {
+        // Map Vita's 4 cores to many host cores based on affinity
+        if (vita_affinity == 0) {
+            // Default affinity: use all ultra cores
+            for (int core : ultra_cores) {
+                CPU_SET(core, &cpuset);
+            }
+            LOG_DEBUG("ULTRA: Thread '{}' gets {} cores (all ultra cores)", name, ultra_cores.size());
+        } else {
+            // Specific affinity: expand based on multiplier
+            for (int vita_core = 0; vita_core < 4; vita_core++) {
+                if (vita_affinity & (1 << vita_core)) {
+                    // Map each Vita core to multiple host cores
+                    int cores_per_vita = static_cast<int>(multiplier);
+                    int start_core = vita_core * cores_per_vita;
+                    
+                    for (int j = 0; j < cores_per_vita && start_core + j < static_cast<int>(ultra_cores.size()); j++) {
+                        CPU_SET(ultra_cores[start_core + j], &cpuset);
+                    }
+                }
+            }
+            LOG_DEBUG("ULTRA: Thread '{}' affinity 0x{:X} expanded to {} host cores", 
+                     name, vita_affinity, CPU_COUNT(&cpuset));
+        }
+        
+        // Apply ultra priority boost based on Vita priority
+        // Vita range: 64 (highest) to 191 (lowest)
+        if (vita_priority <= 80) {  // High priority Vita threads
+            struct sched_param param;
+            param.sched_priority = 20;  // High RT priority
+            pthread_setschedparam(current_thread, SCHED_FIFO, &param);
+            LOG_DEBUG("ULTRA: Thread '{}' gets RT priority 20", name);
+        } else if (vita_priority <= 128) {  // Medium priority
+            struct sched_param param;
+            param.sched_priority = 10;
+            pthread_setschedparam(current_thread, SCHED_FIFO, &param);
+            LOG_DEBUG("ULTRA: Thread '{}' gets RT priority 10", name);
+        }
+        // Low priority threads stay at normal priority
+        
+    } else {
+        // Non-ultra modes: Use existing logic but with multiplier
+        switch (role) {
+            case ThreadRole::MainRender:
+            case ThreadRole::Audio:
+                if (!turbo_cores.empty() && turbo != TurboMode::Disabled) {
+                    // Expand turbo cores based on multiplier
+                    int expanded_count = std::min(
+                        static_cast<int>(turbo_cores.size() * multiplier),
+                        static_cast<int>(perf_cores.size())
+                    );
+                    for (int i = 0; i < expanded_count; i++) {
+                        CPU_SET(perf_cores[i], &cpuset);
+                    }
+                    LOG_DEBUG("Thread '{}' gets {} expanded turbo cores", name, expanded_count);
+                } else {
+                    for (int core : perf_cores) {
+                        CPU_SET(core, &cpuset);
+                    }
+                }
+                break;
+                
+            case ThreadRole::Input:
+            case ThreadRole::Network:
+                for (int core : perf_cores) {
+                    CPU_SET(core, &cpuset);
+                }
+                break;
+                
+            case ThreadRole::Background:
+            default:
+                if (!eff_cores.empty()) {
+                    for (int core : eff_cores) {
+                        CPU_SET(core, &cpuset);
+                    }
+                } else {
+                    for (int core : perf_cores) {
+                        CPU_SET(core, &cpuset);
+                    }
+                }
+                break;
+        }
+    }
+    
+    // Apply the affinity
+    int result = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+    if (result == 0) {
+        LOG_DEBUG("Applied Vita-optimized affinity for thread '{}' (priority: {}, affinity: 0x{:X})", 
+                 name, vita_priority, vita_affinity);
+    } else {
+        LOG_WARN("Failed to set affinity for thread '{}': {}", name, strerror(result));
+    }
+}
+
 void HostThreadScheduler::apply_process_optimizations() {
     TurboMode turbo = get_turbo_mode_ref();
     
@@ -410,10 +557,20 @@ void HostThreadScheduler::set_turbo_mode(TurboMode mode) {
     TurboMode old_mode = get_turbo_mode_ref();
     get_turbo_mode_ref() = mode;
     
-    const char* mode_names[] = {"DISABLED", "BALANCED", "AGGRESSIVE"};
+    const char* mode_names[] = {"DISABLED", "BALANCED", "AGGRESSIVE", "ULTRA"};
     const char* new_mode_str = mode_names[static_cast<int>(mode)];
     
     LOG_INFO("Turbo mode: {} -> {}", mode_names[static_cast<int>(old_mode)], new_mode_str);
+    
+    if (mode == TurboMode::Ultra) {
+        LOG_WARN("ULTRA MODE ACTIVATED - Breaking all Vita limits!");
+        LOG_WARN("Using {} cores with affinity multiplier {}x", 
+                 get_ultra_cores().size(), get_vita_affinity_multiplier());
+        // Set default high multiplier for ultra mode
+        if (get_vita_affinity_multiplier() == 1.0f) {
+            set_vita_affinity_multiplier(3.0f);  // Map 4 Vita cores to 12 host cores
+        }
+    }
     
     if (get_enabled()) {
         apply_process_optimizations();

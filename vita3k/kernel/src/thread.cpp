@@ -443,12 +443,22 @@ void ThreadState::apply_scheduler_hints_if_enabled() {
     if (!sce_kernel_thread::HostThreadScheduler::is_enabled()) return;
     
     if (!name.empty() && !scheduler_hints_applied) {
-        auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
-        sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
-        sce_kernel_thread::HostThreadScheduler::log_thread_info(name, role);
+        // Use enhanced Vita thread optimization if available
+        if (sce_kernel_thread::HostThreadScheduler::is_ultra_mode_active()) {
+            // Use the thread's actual priority and affinity mask
+            sce_kernel_thread::HostThreadScheduler::apply_vita_thread_optimization(
+                name, priority, affinity_mask);
+            LOG_INFO("Applied ULTRA optimization to thread '{}' (priority: {}, affinity: 0x{:X})", 
+                     name, priority, affinity_mask);
+        } else {
+            // Original logic for non-ultra modes
+            auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
+            sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
+            sce_kernel_thread::HostThreadScheduler::log_thread_info(name, role);
+        }
+        
         scheduler_hints_applied = true;
         last_affinity_check = std::chrono::steady_clock::now();
     }
 }
-
 #endif
