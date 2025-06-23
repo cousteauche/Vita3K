@@ -124,11 +124,12 @@ void HostThreadScheduler::detect_cores() {
     if (total >= 24) {
         // High-end desktop (24+ cores like Intel 13700HX)
         // P-cores: 0-15 (16 cores with HT)
-        for (int i = 0; i < 16; ++i) {
+        int p_core_count = 16;
+        for (int i = 0; i < p_core_count; ++i) {
             perf_cores.push_back(i);
         }
         // E-cores: 16-23 (8 efficiency cores)
-        for (int i = 16; i < total; ++i) {
+        for (int i = p_core_count; i < total; ++i) {
             eff_cores.push_back(i);
         }
         // Turbo cores: Best 8 P-cores
