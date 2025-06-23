@@ -517,12 +517,12 @@ int HostThreadScheduler::get_gpu_worker_cores() {
 }
 
 // Vita affinity multiplier functions
-void HostThreadScheduler::set_affinity_multiplier(float multiplier) {
+void HostThreadScheduler::set_vita_affinity_multiplier(float multiplier) {
     get_vita_affinity_multiplier_ref() = multiplier;
     LOG_INFO("Vita affinity multiplier set to: {:.1f}x", multiplier);
 }
 
-float HostThreadScheduler::get_affinity_multiplier() {
+float HostThreadScheduler::get_vita_affinity_multiplier() {
     return get_vita_affinity_multiplier_ref();
 }
 
@@ -560,7 +560,7 @@ void HostThreadScheduler::apply_vita_thread_optimization(const std::string& thre
     }
     
     // Apply Ultra core affinity with multiplier expansion
-    float multiplier = get_affinity_multiplier();
+    float multiplier = get_vita_affinity_multiplier();
     const auto& ultra_cores = get_ultra_cores();
     
     if (!ultra_cores.empty() && multiplier > 1.0f) {

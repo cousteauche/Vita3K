@@ -411,112 +411,105 @@ void HostThreadScheduler::apply_platform_priority(ThreadRole role, TurboMode tur
 void HostThreadScheduler::apply_vita_thread_optimization(const std::string& name, int vita_priority, SceInt32 vita_affinity) {
     if (!get_enabled()) return;
     
+    TurboMode turbo = get_turbo_mode_ref();
+    if (turbo != TurboMode::Ultra) return;  // Ultra mode only
+    
     pthread_t current_thread = pthread_self();
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     
-    const auto& perf_cores = get_performance_cores();
-    const auto& eff_cores = get_efficiency_cores();
-    const auto& turbo_cores = get_turbo_cores();
     const auto& ultra_cores = get_ultra_cores();
-    TurboMode turbo = get_turbo_mode_ref();
     float multiplier = get_vita_affinity_multiplier_ref();
     
-    // First classify the thread
-    ThreadRole role = classify_thread(name);
+    // Ensure we have ultra cores available
+    if (ultra_cores.empty()) {
+        LOG_WARN("ULTRA: No ultra cores available for thread '{}'", name);
+        return;
+    }
     
-    // Ultra mode: Break all limits!
-    if (turbo == TurboMode::Ultra) {
-        // Map Vita's 4 cores to many host cores based on affinity
-        if (vita_affinity == 0) {
-            // Default affinity: use all ultra cores
-            for (int core : ultra_cores) {
-                CPU_SET(core, &cpuset);
-            }
-            LOG_DEBUG("ULTRA: Thread '{}' gets {} cores (all ultra cores)", name, ultra_cores.size());
-        } else {
-            // Specific affinity: expand based on multiplier
-            for (int vita_core = 0; vita_core < 4; vita_core++) {
-                if (vita_affinity & (1 << vita_core)) {
-                    // Map each Vita core to multiple host cores
-                    int cores_per_vita = static_cast<int>(multiplier);
-                    int start_core = vita_core * cores_per_vita;
-                    
-                    for (int j = 0; j < cores_per_vita && start_core + j < static_cast<int>(ultra_cores.size()); j++) {
-                        CPU_SET(ultra_cores[start_core + j], &cpuset);
-                    }
-                }
-            }
-            LOG_DEBUG("ULTRA: Thread '{}' affinity 0x{:X} expanded to {} host cores", 
-                     name, vita_affinity, CPU_COUNT(&cpuset));
-        }
-        
-        // Apply ultra priority boost based on Vita priority
-        // Vita range: 64 (highest) to 191 (lowest)
-        if (vita_priority <= 80) {  // High priority Vita threads
-            struct sched_param param;
-            param.sched_priority = 20;  // High RT priority
-            pthread_setschedparam(current_thread, SCHED_FIFO, &param);
-            LOG_DEBUG("ULTRA: Thread '{}' gets RT priority 20", name);
-        } else if (vita_priority <= 128) {  // Medium priority
-            struct sched_param param;
-            param.sched_priority = 10;
-            pthread_setschedparam(current_thread, SCHED_FIFO, &param);
-            LOG_DEBUG("ULTRA: Thread '{}' gets RT priority 10", name);
-        }
-        // Low priority threads stay at normal priority
-        
+    // Enhanced affinity expansion for Ultra mode
+    std::vector<int> target_cores;
+    
+    if (vita_affinity == 0) {
+        // Default affinity: use all ultra cores
+        target_cores = ultra_cores;
+        LOG_DEBUG("ULTRA: Thread '{}' gets {} cores (all ultra cores)", name, target_cores.size());
     } else {
-        // Non-ultra modes: Use existing logic but with multiplier
-        switch (role) {
-            case ThreadRole::MainRender:
-            case ThreadRole::Audio:
-                if (!turbo_cores.empty() && turbo != TurboMode::Disabled) {
-                    // Expand turbo cores based on multiplier
-                    int expanded_count = std::min(
-                        static_cast<int>(turbo_cores.size() * multiplier),
-                        static_cast<int>(perf_cores.size())
-                    );
-                    for (int i = 0; i < expanded_count; i++) {
-                        CPU_SET(perf_cores[i], &cpuset);
-                    }
-                    LOG_DEBUG("Thread '{}' gets {} expanded turbo cores", name, expanded_count);
-                } else {
-                    for (int core : perf_cores) {
-                        CPU_SET(core, &cpuset);
-                    }
-                }
-                break;
-                
-            case ThreadRole::Input:
-            case ThreadRole::Network:
-                for (int core : perf_cores) {
-                    CPU_SET(core, &cpuset);
-                }
-                break;
-                
-            case ThreadRole::Background:
-            default:
-                if (!eff_cores.empty()) {
-                    for (int core : eff_cores) {
-                        CPU_SET(core, &cpuset);
-                    }
-                } else {
-                    for (int core : perf_cores) {
-                        CPU_SET(core, &cpuset);
-                    }
-                }
-                break;
+        // Count how many Vita cores are specified in the affinity mask
+        int vita_core_count = __builtin_popcount(static_cast<unsigned int>(vita_affinity));
+        if (vita_core_count == 0) {
+            // Fallback: if no bits set, use at least 1 core
+            vita_core_count = 1;
+        }
+        
+        // Calculate target cores based on multiplier
+        int target_core_count = static_cast<int>(vita_core_count * multiplier);
+        target_core_count = std::max(1, std::min(target_core_count, static_cast<int>(ultra_cores.size())));
+        
+        // Assign the best available ultra cores
+        for (int i = 0; i < target_core_count; ++i) {
+            target_cores.push_back(ultra_cores[i]);
+        }
+        
+        LOG_DEBUG("ULTRA: Thread '{}' affinity 0x{:X} expanded to {} host cores ({}x multiplier)", 
+                 name, vita_affinity, target_cores.size(), multiplier);
+    }
+    
+    // Set CPU affinity using the target cores
+    for (int core : target_cores) {
+        if (core >= 0 && core < CPU_SETSIZE) {
+            CPU_SET(core, &cpuset);
         }
     }
     
-    // Apply the affinity
-    int result = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
-    if (result == 0) {
-        LOG_DEBUG("Applied Vita-optimized affinity for thread '{}' (priority: {}, affinity: 0x{:X})", 
-                 name, vita_priority, vita_affinity);
+    // Verify we have at least one core set
+    int final_core_count = CPU_COUNT(&cpuset);
+    if (final_core_count == 0) {
+        // Emergency fallback: use first ultra core
+        if (!ultra_cores.empty()) {
+            CPU_SET(ultra_cores[0], &cpuset);
+            final_core_count = 1;
+            LOG_WARN("ULTRA: Emergency fallback - assigned thread '{}' to core {}", name, ultra_cores[0]);
+        } else {
+            LOG_ERROR("ULTRA: No cores available for thread '{}'", name);
+            return;
+        }
+    }
+    
+    // Apply the CPU affinity
+    int affinity_result = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+    if (affinity_result == 0) {
+        LOG_DEBUG("ULTRA: Successfully applied affinity for thread '{}' ({} cores)", name, final_core_count);
     } else {
-        LOG_WARN("Failed to set affinity for thread '{}': {}", name, strerror(result));
+        LOG_WARN("ULTRA: Failed to set affinity for thread '{}': {} (cores: {})", 
+                 name, strerror(affinity_result), final_core_count);
+    }
+    
+    // Apply RT priority based on Vita priority (64-191 range)
+    // Lower Vita priority numbers = higher actual priority
+    int rt_priority = 1; // Default low RT priority
+    if (vita_priority <= 80) {
+        rt_priority = 20; // Highest RT priority for critical threads
+    } else if (vita_priority <= 100) {
+        rt_priority = 15; // High RT priority
+    } else if (vita_priority <= 128) {
+        rt_priority = 10; // Medium RT priority
+    } else if (vita_priority <= 160) {
+        rt_priority = 5;  // Low RT priority
+    }
+    // Threads with priority > 160 get normal scheduling
+    
+    if (rt_priority > 1) {
+        struct sched_param param;
+        param.sched_priority = rt_priority;
+        
+        int sched_result = pthread_setschedparam(current_thread, SCHED_FIFO, &param);
+        if (sched_result == 0) {
+            LOG_DEBUG("ULTRA: Thread '{}' gets RT priority {}", name, rt_priority);
+        } else {
+            LOG_DEBUG("ULTRA: Thread '{}' RT priority {} failed: {} (expected without privileges)", 
+                     name, rt_priority, strerror(sched_result));
+        }
     }
 }
 
