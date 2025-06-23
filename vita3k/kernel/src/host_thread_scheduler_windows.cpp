@@ -50,7 +50,7 @@ int& HostThreadScheduler::get_gpu_cores() {
 }
 
 float& HostThreadScheduler::get_vita_affinity_multiplier_ref() {
-    static float affinity_multiplier = 3.0f;  // Default 3x multiplier for Ultra mode
+    static float affinity_multiplier = 2.0f;  // Default 2x multiplier for Ultra mode (less aggressive)
     return affinity_multiplier;
 }
 
@@ -135,11 +135,12 @@ void HostThreadScheduler::detect_cores() {
         for (int i = 0; i < 8; ++i) {
             turbo_cores.push_back(i);
         }
-        // Ultra cores: ALL cores for maximum performance
-        for (int i = 0; i < total; ++i) {
+        // Ultra cores: Best 8 cores for maximum performance (not all cores)
+        int ultra_count = std::min(8, p_core_count / 2);
+        for (int i = 0; i < ultra_count; ++i) {
             ultra_cores.push_back(i);
         }
-        LOG_INFO("24+ core Windows system: P-cores 0-15, E-cores 16-{}, Ultra ALL cores", total-1);
+        LOG_INFO("24+ core Windows system: P-cores 0-15, E-cores 16-{}, Ultra 0-{}", total-1, ultra_count-1);
         
     } else if (total >= 16) {
         // Mid-range system (16 cores)
@@ -153,11 +154,12 @@ void HostThreadScheduler::detect_cores() {
         for (int i = 0; i < 6; ++i) {
             turbo_cores.push_back(i);
         }
-        // Ultra: All cores
-        for (int i = 0; i < total; ++i) {
+        // Ultra: Best 8 cores
+        int ultra_count = std::min(8, p_core_count / 2);
+        for (int i = 0; i < ultra_count; ++i) {
             ultra_cores.push_back(i);
         }
-        LOG_INFO("16-core Windows system: P-cores 0-11, E-cores 12-15, Ultra ALL cores");
+        LOG_INFO("16-core Windows system: P-cores 0-11, E-cores 12-15, Ultra 0-{}", ultra_count-1);
         
     } else {
         // Lower core count systems
@@ -172,12 +174,13 @@ void HostThreadScheduler::detect_cores() {
         for (int i = 0; i < turbo_count; ++i) {
             turbo_cores.push_back(i);
         }
-        // Ultra: All available cores
-        for (int i = 0; i < total; ++i) {
+        // Ultra: Best available cores (max 6)
+        int ultra_count = std::min(6, p_core_count / 2);
+        for (int i = 0; i < ultra_count; ++i) {
             ultra_cores.push_back(i);
         }
-        LOG_INFO("Standard Windows system: P-cores 0-{}, E-cores {}-{}, Ultra ALL cores", 
-                 p_core_count-1, p_core_count, total-1);
+        LOG_INFO("Standard Windows system: P-cores 0-{}, E-cores {}-{}, Ultra 0-{}", 
+                 p_core_count-1, p_core_count, total-1, ultra_count-1);
     }
 }
 
@@ -455,6 +458,10 @@ void HostThreadScheduler::set_turbo_mode(TurboMode mode) {
 
 TurboMode HostThreadScheduler::get_turbo_mode() {
     return get_turbo_mode_ref();
+}
+
+bool HostThreadScheduler::is_ultra_mode_active() {
+    return get_turbo_mode_ref() == TurboMode::Ultra;
 }
 
 void HostThreadScheduler::shutdown() {

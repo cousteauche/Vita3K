@@ -6,14 +6,12 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+
 #ifdef __linux__
 #include <pthread.h>
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
-
-// Forward declaration for SceInt32
-typedef int SceInt32;
 
 namespace sce_kernel_thread {
 
@@ -45,7 +43,10 @@ public:
     static void set_turbo_mode(TurboMode mode);
     static TurboMode get_turbo_mode();
     
-    // Thread management - MOVED FROM COMMON
+    // Ultra mode check
+    static bool is_ultra_mode_active();
+    
+    // Thread management - CLEAN VERSION
     static ThreadRole classify_thread(const std::string& name) {
         if (name.empty()) {
             return ThreadRole::Unknown;
@@ -54,6 +55,14 @@ public:
         // Convert to lowercase for case-insensitive matching
         std::string lower_name = name;
         std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+        
+        // Filter out generic/suspicious thread names that shouldn't be optimized
+        if (lower_name == "new thread" || 
+            lower_name.find("unnamed") != std::string::npos ||
+            lower_name.find("thread") == 0 ||  // Threads starting with just "thread"
+            lower_name.length() < 3) {  // Very short generic names
+            return ThreadRole::Background;
+        }
         
         // Audio threads - real-time priority
         if (lower_name.find("audio") != std::string::npos ||
@@ -94,7 +103,8 @@ public:
             lower_name.find("fios") != std::string::npos ||
             lower_name.find("socket") != std::string::npos ||
             lower_name.find("http") != std::string::npos ||
-            lower_name.find("download") != std::string::npos) {
+            lower_name.find("download") != std::string::npos ||
+            lower_name.find("stream") != std::string::npos) {
             return ThreadRole::Network;
         }
         
@@ -104,21 +114,20 @@ public:
     
     static void apply_affinity_hint_current_thread(ThreadRole role);
     static void log_thread_info(const std::string& name, ThreadRole role);
-
+    
     // Platform-specific optimizations
     static void apply_process_optimizations();
     static void detect_hardware_capabilities();
-
+    
     // GPU coordination 
     static void set_gpu_worker_cores(int gpu_cores);
     static int get_gpu_worker_cores();
-
+    
     // Enhanced thread management for Vita overclocking
     static void set_vita_affinity_multiplier(float multiplier);
     static float get_vita_affinity_multiplier();
-    static void apply_vita_thread_optimization(const std::string& name, int vita_priority, SceInt32 vita_affinity);
-    static bool is_ultra_mode_active();
-    
+    static void apply_vita_thread_optimization(const std::string& name, int vita_priority, int vita_affinity);
+
 private:
     // Platform abstraction (implemented per-platform)
     static void detect_cores();
@@ -132,9 +141,9 @@ private:
     static std::vector<int>& get_performance_cores();
     static std::vector<int>& get_efficiency_cores();
     static std::vector<int>& get_turbo_cores();
-    static int& get_gpu_cores();
-    static float& get_vita_affinity_multiplier_ref();  // Changed name to avoid conflict
     static std::vector<int>& get_ultra_cores();
+    static int& get_gpu_cores();
+    static float& get_vita_affinity_multiplier_ref();
 };
 
 // Convenience macros for easy thread registration

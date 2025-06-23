@@ -61,7 +61,7 @@ int HostThreadScheduler::get_gpu_worker_cores() {
 }
 
 float& HostThreadScheduler::get_vita_affinity_multiplier_ref() {
-    static float multiplier = 1.0f;
+    static float multiplier = 2.0f;
     return multiplier;
 }
 
@@ -408,8 +408,7 @@ void HostThreadScheduler::apply_platform_priority(ThreadRole role, TurboMode tur
     }
 }
 
-void HostThreadScheduler::apply_vita_thread_optimization(const std::string& name, int vita_priority, SceInt32 vita_affinity) {
-    if (!get_enabled()) return;
+void HostThreadScheduler::apply_vita_thread_optimization(const std::string& name, int vita_priority, int vita_affinity) {    if (!get_enabled()) return;
     
     TurboMode turbo = get_turbo_mode_ref();
     if (turbo != TurboMode::Ultra) return;  // Ultra mode only
