@@ -443,22 +443,31 @@ void ThreadState::apply_scheduler_hints_if_enabled() {
     if (!sce_kernel_thread::HostThreadScheduler::is_enabled()) return;
     
     if (!name.empty() && !scheduler_hints_applied) {
-        // Use enhanced Vita thread optimization if available
+        // First classify the thread to determine if it deserves Ultra treatment
+        auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
+        
         if (sce_kernel_thread::HostThreadScheduler::is_ultra_mode_active()) {
-            // Use the thread's actual priority and affinity mask
-            sce_kernel_thread::HostThreadScheduler::apply_vita_thread_optimization(
-                name, priority, affinity_mask);
-            LOG_INFO("Applied ULTRA optimization to thread '{}' (priority: {}, affinity: 0x{:X})", 
-                     name, priority, affinity_mask);
+            // Only apply Ultra optimization to critical threads
+            if (role == sce_kernel_thread::ThreadRole::MainRender || 
+                role == sce_kernel_thread::ThreadRole::Audio) {
+                
+                sce_kernel_thread::HostThreadScheduler::apply_vita_thread_optimization(
+                    name, priority, affinity_mask);
+                LOG_INFO("Applied ULTRA optimization to thread '{}' (priority: {}, affinity: 0x{:X})", 
+                         name, priority, affinity_mask);
+            } else {
+                // Non-critical threads get standard optimization
+                sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
+                LOG_DEBUG("Applied standard optimization to thread '{}' (role: {})", 
+                         name, static_cast<int>(role));
+            }
         } else {
-            // Original logic for non-ultra modes
-            auto role = sce_kernel_thread::HostThreadScheduler::classify_thread(name);
+            // Standard turbo mode - use regular thread classification
             sce_kernel_thread::HostThreadScheduler::apply_affinity_hint_current_thread(role);
-            sce_kernel_thread::HostThreadScheduler::log_thread_info(name, role);
         }
         
+        sce_kernel_thread::HostThreadScheduler::log_thread_info(name, role);
         scheduler_hints_applied = true;
-        last_affinity_check = std::chrono::steady_clock::now();
     }
 }
 #endif
