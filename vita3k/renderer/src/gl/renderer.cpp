@@ -39,6 +39,9 @@
 #include <array>
 #include <mutex>
 #include <string_view>
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+#include <kernel/thread/host_thread_scheduler.h>
+#endif
 
 namespace renderer::gl {
 
@@ -262,6 +265,12 @@ bool GLState::init() {
         LOG_ERROR("Failed to initialize screen renderer");
         return false;
     }
+
+#ifdef VITA3K_HAS_HOST_SCHEDULER
+    // Register OpenGL main render thread with scheduler
+    HOST_THREAD_REGISTER_ROLE("OpenGL-Main", sce_kernel_thread::ThreadRole::MainRender);
+    LOG_INFO("OpenGL main thread registered with host thread scheduler");
+#endif
 
     shader_version = fmt::format("v{}", shader::CURRENT_VERSION);
 

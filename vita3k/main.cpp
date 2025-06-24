@@ -228,9 +228,9 @@ int main(int argc, char *argv[]) {
         sce_kernel_thread::HostThreadScheduler::enable(true);
         LOG_INFO("Host thread scheduler ENABLED");
         sce_kernel_thread::HostThreadScheduler::set_turbo_mode(
-            sce_kernel_thread::TurboMode::Aggressive
+            sce_kernel_thread::TurboMode::Ultra
         );
-        LOG_INFO("Host thread scheduler TURBO MODE: AGGRESSIVE - Maximum performance enabled!");
+        LOG_INFO("Host thread scheduler TURBO MODE: ULTRA - Breaking all Vita limits!");
     } else {
         LOG_WARN("Failed to initialize host thread scheduler");
     }

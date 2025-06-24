@@ -19,6 +19,7 @@
 
 #include <util/tracy.h>
 #include <util/types.h>
+#include <rtc/rtc.h>
 
 #include <SDL3/SDL_power.h>
 
@@ -57,7 +58,16 @@ EXPORT(int, scePowerCancelRequest) {
 
 EXPORT(int, scePowerGetArmClockFrequency) {
     TRACY_FUNC(scePowerGetArmClockFrequency);
-    return 444;
+    
+    // Virtual CPU overclocking
+    if (VirtualOverclock::is_enabled()) {
+        int base_freq = 333;  // Real Vita CPU frequency
+        int overclocked_freq = static_cast<int>(base_freq * VirtualOverclock::get_cpu_multiplier());
+        LOG_DEBUG("Virtual CPU frequency reported: {} MHz ({}x)", overclocked_freq, VirtualOverclock::get_cpu_multiplier());
+        return overclocked_freq;
+    }
+    
+    return 333; // Default Vita CPU frequency (was 444, now correct)
 }
 
 EXPORT(int, scePowerGetBatteryChargingStatus) {
@@ -143,7 +153,16 @@ EXPORT(int, scePowerGetBatteryVolt) {
 
 EXPORT(int, scePowerGetBusClockFrequency) {
     TRACY_FUNC(scePowerGetBusClockFrequency);
-    return 222;
+    
+    // Virtual memory/bus overclocking
+    if (VirtualOverclock::is_enabled()) {
+        int base_freq = 222;
+        int overclocked_freq = static_cast<int>(base_freq * VirtualOverclock::get_memory_multiplier());
+        LOG_DEBUG("Virtual bus frequency reported: {} MHz ({}x)", overclocked_freq, VirtualOverclock::get_memory_multiplier());
+        return overclocked_freq;
+    }
+    
+    return 222; // Default Vita bus frequency
 }
 
 EXPORT(int, scePowerGetCaseTemp) {
@@ -153,12 +172,30 @@ EXPORT(int, scePowerGetCaseTemp) {
 
 EXPORT(int, scePowerGetGpuClockFrequency) {
     TRACY_FUNC(scePowerGetGpuClockFrequency);
-    return 222;
+    
+    // Virtual GPU overclocking
+    if (VirtualOverclock::is_enabled()) {
+        int base_freq = 222;
+        int overclocked_freq = static_cast<int>(base_freq * VirtualOverclock::get_gpu_multiplier());
+        LOG_DEBUG("Virtual GPU frequency reported: {} MHz ({}x)", overclocked_freq, VirtualOverclock::get_gpu_multiplier());
+        return overclocked_freq;
+    }
+    
+    return 222; // Default Vita GPU frequency
 }
 
 EXPORT(int, scePowerGetGpuXbarClockFrequency) {
     TRACY_FUNC(scePowerGetGpuXbarClockFrequency);
-    return 166;
+    
+    // Virtual GPU crossbar overclocking
+    if (VirtualOverclock::is_enabled()) {
+        int base_freq = 166;
+        int overclocked_freq = static_cast<int>(base_freq * VirtualOverclock::get_memory_multiplier());
+        LOG_DEBUG("Virtual GPU Xbar frequency reported: {} MHz ({}x)", overclocked_freq, VirtualOverclock::get_memory_multiplier());
+        return overclocked_freq;
+    }
+    
+    return 166; // Default Vita GPU Xbar frequency
 }
 
 EXPORT(int, scePowerGetUsingWireless) {
@@ -249,6 +286,12 @@ EXPORT(int, scePowerSetArmClockFrequency, int freq) {
     if (freq < 0) {
         return SCE_POWER_ERROR_INVALID_VALUE;
     }
+    
+    // Log when games try to set CPU frequency
+    if (VirtualOverclock::is_enabled()) {
+        LOG_INFO("Game requested CPU frequency: {} MHz (Virtual overclocking active)", freq);
+    }
+    
     return 0;
 }
 
@@ -257,6 +300,12 @@ EXPORT(int, scePowerSetBusClockFrequency, int freq) {
     if (freq < 0) {
         return SCE_POWER_ERROR_INVALID_VALUE;
     }
+    
+    // Log when games try to set bus frequency
+    if (VirtualOverclock::is_enabled()) {
+        LOG_INFO("Game requested bus frequency: {} MHz (Virtual overclocking active)", freq);
+    }
+    
     return 0;
 }
 
@@ -265,6 +314,12 @@ EXPORT(int, scePowerSetConfigurationMode, int mode) {
     if (mode != 0x80 && mode != 0x800 && mode != 0x10880) {
         return SCE_POWER_ERROR_INVALID_VALUE;
     }
+    
+    // Log power configuration changes
+    if (VirtualOverclock::is_enabled()) {
+        LOG_INFO("Game set power configuration mode: 0x{:X} (Virtual overclocking active)", mode);
+    }
+    
     return 0;
 }
 
@@ -273,6 +328,12 @@ EXPORT(int, scePowerSetGpuClockFrequency, int freq) {
     if (freq < 0) {
         return SCE_POWER_ERROR_INVALID_VALUE;
     }
+    
+    // Log when games try to set GPU frequency
+    if (VirtualOverclock::is_enabled()) {
+        LOG_INFO("Game requested GPU frequency: {} MHz (Virtual overclocking active)", freq);
+    }
+    
     return 0;
 }
 
@@ -281,6 +342,12 @@ EXPORT(int, scePowerSetGpuXbarClockFrequency, int freq) {
     if (freq < 0) {
         return SCE_POWER_ERROR_INVALID_VALUE;
     }
+    
+    // Log when games try to set GPU Xbar frequency
+    if (VirtualOverclock::is_enabled()) {
+        LOG_INFO("Game requested GPU Xbar frequency: {} MHz (Virtual overclocking active)", freq);
+    }
+    
     return 0;
 }
 

@@ -97,3 +97,15 @@ std::uint64_t rtc_get_ticks(uint64_t base_tick);
 void __RtcPspTimeToTm(tm *val, const SceDateTime *pt);
 void __RtcTicksToPspTime(SceDateTime *t, std::uint64_t ticks);
 std::uint64_t __RtcPspTimeToTicks(const SceDateTime *pt);
+
+// Virtual Overclocking System
+namespace VirtualOverclock {
+    void set_cpu_multiplier(float multiplier);
+    void set_gpu_multiplier(float multiplier);
+    void set_memory_multiplier(float multiplier);
+    float get_cpu_multiplier();
+    float get_gpu_multiplier();
+    float get_memory_multiplier();
+    bool is_enabled();
+    void enable(bool enabled);
+}
